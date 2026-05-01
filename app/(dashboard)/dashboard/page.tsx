@@ -18,6 +18,8 @@ type DocumentRow = {
   ai_risk_level: "low" | "medium" | "high" | null;
   waste_type: string | null;
   ai_summary: string | null;
+  processing_status: "uploaded" | "processing" | "processed" | "failed" | null;
+  processing_error: string | null;
 };
 
 type AlertRow = {
@@ -54,59 +56,44 @@ function mapStatusToUi(status: ComplianceStatus): { label: string; level: RiskLe
   return { label: "At Risk", level: "high" };
 }
 
-function scoreToRisk(score: number): RiskLevel {
-  if (score >= 80) return "low";
-  if (score >= 50) return "medium";
-  return "high";
+function scoreToColor(score: number) {
+  if (score >= 80) return "#16A34A";
+  if (score >= 50) return "#F59E0B";
+  return "#DC2626";
 }
 
 function Badge({ level, label }: { level: RiskLevel; label: string }) {
   return <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-bold ${riskStyles[level]}`}>{label}</span>;
 }
 
-function ragSegments() {
-  return [
-    { from: 0, to: 49, color: "#DC2626" },
-    { from: 50, to: 79, color: "#F59E0B" },
-    { from: 80, to: 100, color: "#16A34A" }
-  ];
-}
-
 function ScoreWheel({ value, size = 96 }: { value: number; size?: number }) {
   const clamped = Math.max(0, Math.min(100, value));
+  const rounded = Math.round(clamped);
   const stroke = 10;
   const radius = (size - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
+  const progressLength = (clamped / 100) * circumference;
+  const progressColor = scoreToColor(clamped);
 
   return (
     <div className="relative" style={{ width: size, height: size }}>
       <svg width={size} height={size} className="-rotate-90">
         <circle cx={size / 2} cy={size / 2} r={radius} stroke="#E5E7EB" strokeWidth={stroke} fill="none" />
-        {ragSegments().map((segment) => {
-          const segStart = (segment.from / 100) * circumference;
-          const segLength = ((segment.to - segment.from + 1) / 100) * circumference;
-          const segValue = Math.max(0, Math.min(clamped - segment.from + 1, segment.to - segment.from + 1));
-          const segDraw = (segValue / (segment.to - segment.from + 1)) * segLength;
-
-          return (
-            <circle
-              key={`${segment.from}-${segment.to}`}
-              cx={size / 2}
-              cy={size / 2}
-              r={radius}
-              stroke={segment.color}
-              strokeWidth={stroke}
-              fill="none"
-              strokeLinecap="round"
-              strokeDasharray={`${segDraw} ${circumference - segDraw}`}
-              strokeDashoffset={-segStart}
-            />
-          );
-        })}
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          stroke={progressColor}
+          strokeWidth={stroke}
+          fill="none"
+          strokeLinecap="round"
+          strokeDasharray={`${progressLength} ${circumference - progressLength}`}
+        />
       </svg>
       <div className="absolute inset-0 flex items-center justify-center text-[#111827]">
         <div className="text-center">
-          <p className="text-2xl font-extrabold leading-none">{clamped}%</p>
+          <p className="text-2xl font-extrabold leading-none">{rounded}</p>
+          <p className="mt-1 text-xs font-semibold text-[#6B7280]">/100</p>
         </div>
       </div>
     </div>
@@ -161,7 +148,7 @@ export default async function DashboardPage() {
 
   const { data: documents } = await supabase
     .from("documents")
-    .select("id,file_name,created_at,document_type,expiry_date,ai_risk_level,waste_type,ai_summary")
+    .select("id,file_name,created_at,document_type,expiry_date,ai_risk_level,waste_type,ai_summary,processing_status,processing_error")
     .eq("business_id", business.id)
     .order("created_at", { ascending: false });
 
@@ -293,14 +280,32 @@ export default async function DashboardPage() {
           <div className="space-y-2">
             {recentDocuments.length ? (
               recentDocuments.map((doc) => {
+                const status = doc.processing_status ?? "uploaded";
                 const risk = doc.ai_risk_level === "high" ? "high" : doc.ai_risk_level === "medium" ? "medium" : "low";
+                const statusLevel: RiskLevel =
+                  status === "failed" ? "high" : status === "processing" || status === "uploaded" ? "medium" : risk;
+                const statusLabel =
+                  status === "failed"
+                    ? "failed"
+                    : status === "processing"
+                      ? "processing"
+                      : status === "uploaded"
+                        ? "uploaded"
+                        : risk === "low"
+                          ? "processed"
+                          : risk === "medium"
+                            ? "review"
+                            : "urgent";
                 return (
                   <article key={doc.id} className="flex items-center justify-between gap-3 rounded-xl border border-[#E5E7EB] p-3">
                     <div>
                       <p className="text-sm font-semibold text-[#111827]">{doc.file_name}</p>
                       <p className="text-xs text-[#6B7280]">Uploaded {formatDate(doc.created_at)}</p>
+                      {status === "failed" && doc.processing_error ? (
+                        <p className="mt-1 text-xs text-[#DC2626]">Error: {doc.processing_error}</p>
+                      ) : null}
                     </div>
-                    <Badge level={risk} label={risk === "low" ? "processed" : risk === "medium" ? "review" : "urgent"} />
+                    <Badge level={statusLevel} label={statusLabel} />
                   </article>
                 );
               })

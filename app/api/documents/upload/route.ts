@@ -1,15 +1,8 @@
 import { NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase/server";
-import { supabaseAdmin } from "@/lib/supabase/admin";
-import { extractDocumentWithAI } from "@/lib/openai/document-extraction";
+import { processDocument, uploadDocument } from "@/lib/documents/pipeline";
 
 const ALLOWED_MIME_TYPES = new Set(["application/pdf", "image/png", "image/jpg", "image/jpeg"]);
-const BUCKET = "waste-documents";
-
-function safeFileName(name: string) {
-  return name.replace(/[^a-zA-Z0-9._-]/g, "_");
-}
-
 export async function POST(request: Request) {
   const supabase = await createServerClient();
   const {
@@ -52,46 +45,13 @@ export async function POST(request: Request) {
   const failures: Array<{ file_name: string; error: string }> = [];
 
   for (const file of files) {
-    const filePath = `${user.id}/${Date.now()}-${safeFileName(file.name)}`;
-
-    // Use admin client for Storage writes to avoid bucket RLS upload failures.
-    const { error: uploadError } = await supabaseAdmin.storage.from(BUCKET).upload(filePath, file, {
-      upsert: false,
-      contentType: file.type
-    });
-
-    if (uploadError) {
-      failures.push({ file_name: file.name, error: `Storage upload failed: ${uploadError.message}` });
-      continue;
-    }
-
     try {
-      const ai = await extractDocumentWithAI(file);
-
-      const { error: insertError } = await supabase.from("documents").insert({
-        user_id: user.id,
-        business_id: business.id,
-        file_name: file.name,
-        storage_path: filePath,
-        document_type: ai.document_type,
-        extracted_supplier: ai.extracted_supplier,
-        extracted_date: ai.extracted_date,
-        expiry_date: ai.expiry_date,
-        waste_type: ai.waste_type,
-        ai_summary: ai.ai_summary,
-        ai_risk_level: ai.ai_risk_level,
-        ai_extracted_json: ai
-      });
-
-      if (insertError) {
-        failures.push({ file_name: file.name, error: `Document save failed: ${insertError.message}` });
-        continue;
-      }
-
+      const document = await uploadDocument({ userId: user.id, businessId: business.id, file });
+      await processDocument(document.id);
       successes.push({ file_name: file.name });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown extraction error.";
-      failures.push({ file_name: file.name, error: `AI extraction failed: ${message}` });
+      const message = error instanceof Error ? error.message : "Unknown document processing error.";
+      failures.push({ file_name: file.name, error: message });
     }
   }
 
