@@ -9,12 +9,12 @@ type ButtonProps = {
 
 export function Button({ children, variant = "primary", href, type = "button", className = "", ...props }: ButtonProps) {
   const base =
-    "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-offset-2";
+    "inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-bold transition focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:cursor-not-allowed";
 
   const tone =
     variant === "primary"
-      ? "bg-brand-600 text-white hover:bg-brand-700 focus:ring-brand-600 disabled:bg-brand-300"
-      : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 focus:ring-slate-300 disabled:text-slate-400";
+      ? "bg-[#0f5b46] text-white hover:bg-[#0c4939] focus:ring-[#0f5b46] disabled:bg-[#7fb2a2]"
+      : "border border-[#cfe0da] bg-white text-[#21453a] hover:bg-[#f2f7f5] focus:ring-[#cfe0da] disabled:text-[#89a39a]";
 
   const classes = `${base} ${tone} ${className}`.trim();
 

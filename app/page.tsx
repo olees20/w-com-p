@@ -4,32 +4,28 @@ import { Button } from "@/components/ui/button";
 const faqs = [
   {
     q: "Who is WComp for?",
-    a: "WComp is designed for small UK businesses including cafes, restaurants, salons, offices, workshops, and small warehouses."
+    a: "Small UK businesses including cafes, restaurants, salons, offices, workshops, and small warehouses."
   },
   {
-    q: "Do I need compliance expertise to use it?",
-    a: "No. WComp turns your records, deadlines, and risks into clear actions so your team knows what to do next."
+    q: "Do I need compliance expertise?",
+    a: "No. WComp translates records and risk into practical actions for your team."
   },
   {
-    q: "What happens before an inspection?",
-    a: "You can review open issues, check your audit pack, and export a printable summary of your key compliance records."
-  },
-  {
-    q: "Does WComp replace legal advice?",
-    a: "No. WComp helps you stay organised and inspection-ready, but it does not replace official guidance or qualified advice."
+    q: "Can I prepare for inspections quickly?",
+    a: "Yes. Your dashboard, alerts, and audit pack are built to show readiness at a glance."
   }
 ];
 
 export default function LandingPage() {
   return (
-    <main className="min-h-screen bg-slate-50 text-slate-900">
-      <header className="border-b border-slate-200 bg-white">
+    <main className="min-h-screen text-[#143027]">
+      <header className="border-b border-[#d8e5df] bg-white/80 backdrop-blur">
         <div className="container-page flex h-16 items-center justify-between">
-          <Link href="/" className="text-base font-semibold tracking-tight">
+          <Link href="/" className="text-xl font-extrabold tracking-tight text-[#0f4336]">
             WComp
           </Link>
           <div className="flex items-center gap-3">
-            <Link href="/login" className="text-sm font-medium text-slate-600 hover:text-slate-900">
+            <Link href="/login" className="text-sm font-semibold text-[#557067]">
               Log in
             </Link>
             <Button href="/signup">Start free</Button>
@@ -37,155 +33,113 @@ export default function LandingPage() {
         </div>
       </header>
 
-      <section className="container-page py-16 sm:py-20">
-        <p className="text-sm font-medium text-brand-700">Waste Compliance Monitor</p>
-        <h1 className="mt-3 max-w-4xl text-4xl font-semibold tracking-tight sm:text-5xl">
-          WComp monitors your waste compliance so your business is always inspection-ready.
-        </h1>
-        <p className="mt-5 max-w-2xl text-lg text-slate-600">
-          Keep documents, alerts, and compliance checks in one place. Get clear priorities each week so nothing critical is missed.
-        </p>
-        <div className="mt-8 flex flex-wrap gap-3">
-          <Button href="/signup">Start free</Button>
-          <Button href="/pricing" variant="secondary">
-            View pricing
-          </Button>
-        </div>
-      </section>
-
-      <section className="border-y border-slate-200 bg-white">
-        <div className="container-page py-14">
-          <h2 className="text-2xl font-semibold tracking-tight">The problem for small teams</h2>
-          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <article className="rounded-xl border border-slate-200 p-4">
-              <p className="font-medium">Records are scattered</p>
-              <p className="mt-1 text-sm text-slate-600">Transfer notes, licences, and invoices live across inboxes, folders, and paper files.</p>
-            </article>
-            <article className="rounded-xl border border-slate-200 p-4">
-              <p className="font-medium">Deadlines get missed</p>
-              <p className="mt-1 text-sm text-slate-600">Expiry dates and monthly checks are easy to forget when everyone is busy.</p>
-            </article>
-            <article className="rounded-xl border border-slate-200 p-4">
-              <p className="font-medium">Inspection stress</p>
-              <p className="mt-1 text-sm text-slate-600">When asked for evidence, teams scramble instead of responding with confidence.</p>
-            </article>
-          </div>
-        </div>
-      </section>
-
-      <section className="container-page py-14">
-        <h2 className="text-2xl font-semibold tracking-tight">How it works</h2>
-        <div className="mt-6 grid gap-4 md:grid-cols-3">
-          <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="text-sm font-semibold text-brand-700">1. Set up your profile</p>
-            <p className="mt-2 text-sm text-slate-600">Add your business details and waste profile in minutes.</p>
-          </article>
-          <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="text-sm font-semibold text-brand-700">2. Upload compliance documents</p>
-            <p className="mt-2 text-sm text-slate-600">Store key records in one secure place and keep your evidence organised.</p>
-          </article>
-          <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="text-sm font-semibold text-brand-700">3. Monitor and act</p>
-            <p className="mt-2 text-sm text-slate-600">WComp highlights risk, open alerts, and next actions to stay inspection-ready.</p>
-          </article>
-        </div>
-      </section>
-
-      <section className="border-y border-slate-200 bg-white">
-        <div className="container-page py-14">
-          <h2 className="text-2xl font-semibold tracking-tight">Dashboard preview</h2>
-          <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5">
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <div className="rounded-lg border border-slate-200 bg-white p-4">
-                <p className="text-sm text-slate-500">Compliance status</p>
-                <p className="mt-1 text-xl font-semibold">Attention Needed</p>
-              </div>
-              <div className="rounded-lg border border-slate-200 bg-white p-4">
-                <p className="text-sm text-slate-500">Compliance score</p>
-                <p className="mt-1 text-xl font-semibold">78%</p>
-              </div>
-              <div className="rounded-lg border border-slate-200 bg-white p-4">
-                <p className="text-sm text-slate-500">Open alerts</p>
-                <p className="mt-1 text-xl font-semibold">3</p>
-              </div>
-            </div>
-            <p className="mt-4 text-sm text-slate-600">
-              See what is missing, what is urgent, and what to fix first without digging through paperwork.
+      <section className="container-page py-16">
+        <div className="grid gap-8 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
+          <div>
+            <p className="text-sm font-bold uppercase tracking-[0.12em] text-[#2a6d59]">Waste Compliance Monitor</p>
+            <h1 className="mt-3 text-4xl font-extrabold tracking-tight sm:text-5xl">
+              WComp monitors your waste compliance so your business is always inspection-ready.
+            </h1>
+            <p className="mt-4 max-w-2xl text-lg text-[#5c746c]">
+              Keep documents, alerts, and audit readiness in one system. Know what is missing, what is urgent, and what to fix first.
             </p>
+            <div className="mt-7 flex flex-wrap gap-3">
+              <Button href="/signup">Start free</Button>
+              <Button href="/pricing" variant="secondary">
+                View pricing
+              </Button>
+            </div>
           </div>
-        </div>
-      </section>
 
-      <section className="container-page py-14">
-        <h2 className="text-2xl font-semibold tracking-tight">Features built for peace of mind</h2>
-        <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="font-medium">Compliance scoring</p>
-            <p className="mt-2 text-sm text-slate-600">Know where you stand today with a clear score and status.</p>
-          </article>
-          <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="font-medium">Smart alerting</p>
-            <p className="mt-2 text-sm text-slate-600">Catch missing records, upcoming expiries, and unresolved risks early.</p>
-          </article>
-          <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="font-medium">Audit pack export</p>
-            <p className="mt-2 text-sm text-slate-600">Generate a clean printable pack with key records and current status.</p>
-          </article>
-          <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="font-medium">Document storage</p>
-            <p className="mt-2 text-sm text-slate-600">Keep transfer notes, licences, and reports tied to your business profile.</p>
-          </article>
-          <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="font-medium">Clear action planning</p>
-            <p className="mt-2 text-sm text-slate-600">Prioritise what to resolve first based on compliance impact.</p>
-          </article>
-          <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="font-medium">Assistant support</p>
-            <p className="mt-2 text-sm text-slate-600">Ask practical questions using your own records and dashboard context.</p>
-          </article>
-        </div>
-      </section>
-
-      <section className="border-y border-slate-200 bg-white">
-        <div className="container-page py-14">
-          <h2 className="text-2xl font-semibold tracking-tight">Pricing</h2>
-          <div className="mt-6 max-w-xl rounded-xl border border-slate-200 p-6">
-            <p className="text-sm font-semibold uppercase tracking-wide text-brand-700">Starter</p>
-            <p className="mt-2 text-4xl font-semibold">£29<span className="text-xl text-slate-500">/month</span></p>
-            <p className="mt-2 text-sm text-slate-600">One business location with full core monitoring and audit readiness tools.</p>
-            <ul className="mt-4 space-y-2 text-sm text-slate-700">
-              <li>Document uploads</li>
-              <li>Compliance score and status</li>
-              <li>Automated alerts</li>
-              <li>AI assistant</li>
-            </ul>
-            <div className="mt-6">
-              <Button href="/signup">Start Starter plan</Button>
+          <div className="app-panel overflow-hidden">
+            <div className="app-sidebar p-5 text-white">
+              <p className="text-sm font-bold text-emerald-100">Compliance snapshot</p>
+              <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                <div className="rounded-lg bg-white/10 p-3">
+                  <p className="text-xs text-emerald-100">Status</p>
+                  <p className="mt-1 font-bold">Attention Needed</p>
+                </div>
+                <div className="rounded-lg bg-white/10 p-3">
+                  <p className="text-xs text-emerald-100">Score</p>
+                  <p className="mt-1 font-bold">78%</p>
+                </div>
+                <div className="rounded-lg bg-white/10 p-3">
+                  <p className="text-xs text-emerald-100">Open alerts</p>
+                  <p className="mt-1 font-bold">3</p>
+                </div>
+              </div>
+            </div>
+            <div className="p-5">
+              <p className="text-sm font-semibold text-[#213e35]">Most urgent action</p>
+              <p className="mt-1 text-sm text-[#5c746c]">Carrier licence expires within 30 days.</p>
+              <Button className="mt-4 w-full">Resolve now</Button>
             </div>
           </div>
         </div>
       </section>
 
+      <section className="container-page grid gap-4 py-4 md:grid-cols-3">
+        {[
+          ["No scattered records", "Store documents and evidence in one organised workspace."],
+          ["No missed deadlines", "Automated monitoring catches expiring and missing records."],
+          ["No inspection panic", "Generate audit-ready packs when needed."]
+        ].map(([title, copy]) => (
+          <article key={title} className="app-panel p-5">
+            <h3 className="font-bold text-[#1b3a31]">{title}</h3>
+            <p className="mt-2 text-sm text-[#5f746d]">{copy}</p>
+          </article>
+        ))}
+      </section>
+
       <section className="container-page py-14">
-        <h2 className="text-2xl font-semibold tracking-tight">FAQ</h2>
-        <div className="mt-6 space-y-3">
-          {faqs.map((item) => (
-            <article key={item.q} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-              <h3 className="font-medium text-slate-900">{item.q}</h3>
-              <p className="mt-2 text-sm text-slate-600">{item.a}</p>
+        <h2 className="text-2xl font-extrabold">How it works</h2>
+        <div className="mt-5 grid gap-4 md:grid-cols-3">
+          {["Set up your business profile", "Upload compliance documents", "Act on score and alerts"].map((step, i) => (
+            <article key={step} className="app-panel p-5">
+              <p className="text-sm font-bold text-[#2b6a58]">Step {i + 1}</p>
+              <p className="mt-1 font-semibold text-[#1b3a31]">{step}</p>
             </article>
           ))}
         </div>
       </section>
 
-      <section className="border-t border-slate-200 bg-brand-900">
-        <div className="container-page py-14 text-white">
-          <h2 className="text-3xl font-semibold tracking-tight">Stay inspection-ready without the guesswork</h2>
-          <p className="mt-3 max-w-2xl text-brand-100">
-            Join small UK businesses using WComp to monitor compliance risk, stay organised, and act before issues escalate.
-          </p>
+      <section className="border-y border-[#d8e5df] bg-white">
+        <div className="container-page py-14">
+          <h2 className="text-2xl font-extrabold">Starter pricing</h2>
+          <div className="mt-5 max-w-xl app-panel p-6">
+            <p className="text-sm font-bold uppercase tracking-[0.1em] text-[#2a6d59]">Starter</p>
+            <p className="mt-2 text-4xl font-extrabold">£29<span className="text-xl font-semibold text-[#67817a]"> / month</span></p>
+            <ul className="mt-4 space-y-1 text-sm text-[#5f746d]">
+              <li>One business location</li>
+              <li>Document uploads</li>
+              <li>Compliance score and alerts</li>
+              <li>AI assistant</li>
+            </ul>
+            <Button href="/signup" className="mt-5">
+              Start Starter plan
+            </Button>
+          </div>
+        </div>
+      </section>
+
+      <section className="container-page py-14">
+        <h2 className="text-2xl font-extrabold">FAQ</h2>
+        <div className="mt-5 space-y-3">
+          {faqs.map((item) => (
+            <article key={item.q} className="app-panel p-5">
+              <h3 className="font-bold">{item.q}</h3>
+              <p className="mt-1 text-sm text-[#5f746d]">{item.a}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="app-sidebar mt-8">
+        <div className="container-page py-12 text-white">
+          <h2 className="text-3xl font-extrabold">Sell peace of mind, not paperwork.</h2>
+          <p className="mt-2 max-w-2xl text-emerald-100">Get a clearer compliance picture this week and stay inspection-ready all year.</p>
           <div className="mt-6 flex flex-wrap gap-3">
-            <Button href="/signup">Create your account</Button>
+            <Button href="/signup">Create account</Button>
             <Button href="/pricing" variant="secondary">
               View pricing
             </Button>

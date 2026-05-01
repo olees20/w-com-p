@@ -29,15 +29,9 @@ type AlertRow = {
 };
 
 const riskStyles: Record<RiskLevel, string> = {
-  low: "bg-emerald-100 text-emerald-700 border-emerald-200",
-  medium: "bg-amber-100 text-amber-700 border-amber-200",
-  high: "bg-red-100 text-red-700 border-red-200"
-};
-
-const fallbackAuditReadiness = {
-  value: "81%",
-  blockers: "3 blockers",
-  note: "Missing signatures on two chain-of-custody forms."
+  low: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  medium: "bg-amber-50 text-amber-700 border-amber-200",
+  high: "bg-red-50 text-red-700 border-red-200"
 };
 
 function formatDate(value: string) {
@@ -49,37 +43,19 @@ function formatDate(value: string) {
 }
 
 function mapStatusToUi(status: ComplianceStatus): { label: string; level: RiskLevel } {
-  if (status === "compliant") {
-    return { label: "Compliant", level: "low" };
-  }
-
-  if (status === "attention_needed") {
-    return { label: "Attention Needed", level: "medium" };
-  }
-
+  if (status === "compliant") return { label: "Compliant", level: "low" };
+  if (status === "attention_needed") return { label: "Attention Needed", level: "medium" };
   return { label: "At Risk", level: "high" };
 }
 
-function RiskBadge({ level, label }: { level: RiskLevel; label: string }) {
-  return (
-    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${riskStyles[level]}`}>
-      {label}
-    </span>
-  );
+function Badge({ level, label }: { level: RiskLevel; label: string }) {
+  return <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-bold ${riskStyles[level]}`}>{label}</span>;
 }
 
-function DashboardCard({
-  title,
-  children,
-  className = ""
-}: {
-  title: string;
-  children: React.ReactNode;
-  className?: string;
-}) {
+function Panel({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className={`rounded-xl border border-slate-200 bg-white p-5 shadow-sm ${className}`}>
-      <h2 className="text-sm font-semibold text-slate-700">{title}</h2>
+    <section className="app-panel p-5">
+      <h2 className="text-sm font-bold text-[#1c3a31]">{title}</h2>
       <div className="mt-4">{children}</div>
     </section>
   );
@@ -92,9 +68,7 @@ export default async function DashboardPage() {
     data: { user }
   } = await supabase.auth.getUser();
 
-  if (!user) {
-    return null;
-  }
+  if (!user) return null;
 
   const { data: business } = await supabase
     .from("businesses")
@@ -108,9 +82,7 @@ export default async function DashboardPage() {
       compliance_status: ComplianceStatus | null;
     }>();
 
-  if (!business) {
-    return null;
-  }
+  if (!business) return null;
 
   await runAlertMonitoringForBusiness(business.id);
 
@@ -132,9 +104,7 @@ export default async function DashboardPage() {
     .order("created_at", { ascending: false })
     .limit(10);
 
-  if (!alertsQuery.error) {
-    openAlerts = (alertsQuery.data ?? []) as AlertRow[];
-  }
+  if (!alertsQuery.error) openAlerts = (alertsQuery.data ?? []) as AlertRow[];
 
   const scoring = calculateComplianceScore({
     businessProfile: {
@@ -146,112 +116,90 @@ export default async function DashboardPage() {
     openAlerts
   });
 
-  await supabase
-    .from("businesses")
-    .update({ compliance_score: scoring.score, compliance_status: scoring.status })
-    .eq("id", business.id);
+  await supabase.from("businesses").update({ compliance_score: scoring.score, compliance_status: scoring.status }).eq("id", business.id);
 
   const statusUi = mapStatusToUi(scoring.status);
   const scoreRisk: RiskLevel = scoring.score >= 80 ? "low" : scoring.score >= 50 ? "medium" : "high";
 
   return (
     <div className="space-y-5">
-      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Live Compliance Summary</p>
-        <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <section className="app-panel p-6">
+        <p className="text-xs font-bold uppercase tracking-[0.12em] text-[#4a6a60]">Compliance Health Summary</p>
+        <div className="mt-3 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <p className="text-2xl font-semibold tracking-tight text-slate-900">Are we compliant right now?</p>
-            <p className="mt-1 text-sm text-slate-600">{scoring.explanation}</p>
+            <h1 className="text-2xl font-extrabold tracking-tight text-[#123026]">Are we compliant right now?</h1>
+            <p className="mt-1 text-sm text-[#5b746b]">{scoring.explanation}</p>
           </div>
-          <RiskBadge level={statusUi.level} label={statusUi.label} />
+          <div className="flex items-center gap-3">
+            <Badge level={statusUi.level} label={statusUi.label} />
+            <div className="rounded-xl bg-[#0f4b3b] px-4 py-2 text-white">
+              <p className="text-xs uppercase text-emerald-100">Score</p>
+              <p className="text-lg font-extrabold">{scoring.score}%</p>
+            </div>
+          </div>
         </div>
-      </div>
+      </section>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <DashboardCard title="1. Compliance Status">
+      <div className="grid gap-4 xl:grid-cols-3">
+        <Panel title="Open Alerts">
           <div className="space-y-3">
-            <RiskBadge level={statusUi.level} label={statusUi.label} />
-            <p className="text-sm text-slate-600">{scoring.explanation}</p>
-            <Button className="w-full">Resolve critical actions</Button>
+            {openAlerts.length ? (
+              openAlerts.map((alert) => (
+                <article key={alert.id} className="rounded-xl border border-[#dce6e2] bg-white p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm font-semibold text-[#1c3a31]">{alert.title}</p>
+                    <Badge level={alert.severity ?? "medium"} label={alert.severity ?? "medium"} />
+                  </div>
+                  {alert.description ? <p className="mt-1 text-sm text-[#5f746d]">{alert.description}</p> : null}
+                  {alert.due_date ? <p className="mt-1 text-xs text-[#7a8f88]">Due {formatDate(alert.due_date)}</p> : null}
+                  <form action={markAlertResolved} className="mt-2">
+                    <input type="hidden" name="alert_id" value={alert.id} />
+                    <Button type="submit" variant="secondary" className="w-full">
+                      Mark resolved
+                    </Button>
+                  </form>
+                </article>
+              ))
+            ) : (
+              <p className="text-sm text-[#5f746d]">No open alerts.</p>
+            )}
           </div>
-        </DashboardCard>
+        </Panel>
 
-        <DashboardCard title="2. Compliance Score">
-          <div className="space-y-3">
-            <p className="text-3xl font-semibold tracking-tight text-slate-900">{scoring.score}%</p>
-            <p className="text-sm text-slate-600">Updated from business profile, uploaded documents, and open alerts.</p>
-            <RiskBadge level={scoreRisk} label={scoreRisk === "low" ? "Low risk" : scoreRisk === "medium" ? "Moderate risk" : "High risk"} />
-            <Button variant="secondary" className="w-full">
-              Improve score
-            </Button>
-          </div>
-        </DashboardCard>
-
-        <DashboardCard title="3. Alerts & Actions">
-          <div className="space-y-3">
-            <ul className="space-y-2">
-              {openAlerts.length ? (
-                openAlerts.map((alert) => (
-                  <li key={alert.id} className="space-y-2 rounded-md border border-slate-200 p-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <p className="text-sm font-medium text-slate-800">{alert.title}</p>
-                      <RiskBadge level={alert.severity ?? "medium"} label={alert.severity ?? "medium"} />
-                    </div>
-                    {alert.description ? <p className="text-sm text-slate-600">{alert.description}</p> : null}
-                    {alert.due_date ? <p className="text-xs text-slate-500">Due {formatDate(alert.due_date)}</p> : null}
-                    <form action={markAlertResolved}>
-                      <input type="hidden" name="alert_id" value={alert.id} />
-                      <Button type="submit" variant="secondary" className="w-full">
-                        Mark resolved
-                      </Button>
-                    </form>
-                  </li>
-                ))
-              ) : (
-                <li className="rounded-md border border-slate-200 p-2 text-sm text-slate-600">No open alerts.</li>
-              )}
-            </ul>
-          </div>
-        </DashboardCard>
-
-        <DashboardCard title="4. Recent Documents">
+        <Panel title="Recent Documents">
           <div className="space-y-3">
             <ul className="space-y-2">
               {recentDocuments.length ? (
                 recentDocuments.map((doc) => (
-                  <li key={doc.id} className="rounded-md border border-slate-200 p-2">
-                    <p className="text-sm font-medium text-slate-800">{doc.file_name}</p>
-                    <p className="text-xs text-slate-500">Uploaded {formatDate(doc.created_at)}</p>
+                  <li key={doc.id} className="rounded-lg border border-[#dce6e2] bg-[#fafcfb] p-3">
+                    <p className="text-sm font-semibold text-[#1d3a31]">{doc.file_name}</p>
+                    <p className="mt-1 text-xs text-[#6f857e]">Uploaded {formatDate(doc.created_at)}</p>
                   </li>
                 ))
               ) : (
-                <li className="rounded-md border border-slate-200 p-2 text-sm text-slate-600">No documents uploaded yet.</li>
+                <li className="rounded-lg border border-[#dce6e2] p-3 text-sm text-[#5f746d]">No documents uploaded yet.</li>
               )}
             </ul>
             <DocumentUpload />
           </div>
-        </DashboardCard>
+        </Panel>
 
-        <DashboardCard title="5. Audit Readiness">
+        <Panel title="Action Center">
           <div className="space-y-3">
-            <p className="text-3xl font-semibold tracking-tight text-slate-900">{fallbackAuditReadiness.value}</p>
-            <p className="text-sm text-slate-600">{fallbackAuditReadiness.blockers}</p>
-            <p className="text-sm text-slate-600">{fallbackAuditReadiness.note}</p>
-            <Button className="w-full">Prepare for next audit</Button>
-          </div>
-        </DashboardCard>
-
-        <DashboardCard title="6. AI Assistant" className="bg-brand-50">
-          <div className="space-y-3">
-            <p className="text-sm text-slate-700">
-              Ask WComp AI what is driving risk and what to do next across your sites.
-            </p>
-            <div className="rounded-md border border-brand-100 bg-white p-3 text-sm text-slate-700">
-              Try: "What should I fix first to reduce risk this week?"
+            <div className="rounded-lg border border-[#dce6e2] bg-[#fafcfb] p-3">
+              <p className="text-sm font-semibold text-[#1d3a31]">Compliance status</p>
+              <p className="mt-1 text-sm text-[#5f746d]">{statusUi.label}</p>
             </div>
-            <Button href="/dashboard/assistant" className="w-full">Open AI Assistant</Button>
+            <div className="rounded-lg border border-[#dce6e2] bg-[#fafcfb] p-3">
+              <p className="text-sm font-semibold text-[#1d3a31]">Risk level</p>
+              <p className="mt-1 text-sm text-[#5f746d]">{scoreRisk === "low" ? "Low" : scoreRisk === "medium" ? "Moderate" : "High"}</p>
+            </div>
+            <Button className="w-full">Resolve critical actions</Button>
+            <Button href="/dashboard/assistant" variant="secondary" className="w-full">
+              Ask AI Assistant
+            </Button>
           </div>
-        </DashboardCard>
+        </Panel>
       </div>
     </div>
   );

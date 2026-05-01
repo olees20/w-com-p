@@ -2,7 +2,14 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createServerClient } from "@/lib/supabase/server";
 import { logoutAction } from "@/app/(auth)/actions";
-import { Button } from "@/components/ui/button";
+
+const nav = [
+  { href: "/dashboard", label: "Overview" },
+  { href: "/dashboard/assistant", label: "AI Assistant" },
+  { href: "/dashboard/billing", label: "Billing" },
+  { href: "/dashboard/audit-pack", label: "Audit Pack" },
+  { href: "/dashboard/settings", label: "Settings" }
+];
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createServerClient();
@@ -21,29 +28,38 @@ export default async function DashboardLayout({ children }: { children: React.Re
   }
 
   return (
-    <div className="min-h-screen bg-slate-100">
-      <header className="border-b border-slate-200 bg-white">
-        <div className="container-page flex h-16 items-center justify-between">
-          <Link href="/dashboard" className="text-base font-semibold tracking-tight">
-            WComp
-          </Link>
-          <div className="flex items-center gap-4">
-            <nav className="flex items-center gap-6 text-sm text-slate-600">
-              <Link href="/dashboard">Overview</Link>
-              <Link href="/dashboard/assistant">AI Assistant</Link>
-              <Link href="/dashboard/billing">Billing</Link>
-              <Link href="/dashboard/audit-pack">Audit Pack</Link>
-              <Link href="/dashboard/settings">Settings</Link>
-            </nav>
-            <form action={logoutAction}>
-              <Button type="submit" variant="secondary">
-                Logout
-              </Button>
-            </form>
-          </div>
+    <div className="app-shell lg:grid lg:grid-cols-[260px_1fr]">
+      <aside className="app-sidebar p-5 text-white lg:sticky lg:top-0 lg:h-screen">
+        <Link href="/dashboard" className="block text-xl font-extrabold tracking-tight">
+          WComp
+        </Link>
+        <p className="mt-1 text-xs text-emerald-100/80">Waste Compliance Monitor</p>
+
+        <nav className="mt-8 space-y-1">
+          {nav.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              className="block rounded-lg px-3 py-2 text-sm text-emerald-50/90 transition hover:bg-white/10 hover:text-white"
+            >
+              {item.label}
+            </Link>
+          ))}
+        </nav>
+
+        <div className="mt-8 rounded-xl border border-white/20 bg-white/10 p-4 text-sm">
+          <p className="font-semibold">Your data is private and secure</p>
+          <p className="mt-1 text-emerald-100/90">We never use your documents to train AI models.</p>
         </div>
-      </header>
-      <main className="container-page py-8">{children}</main>
+
+        <form action={logoutAction} className="mt-6">
+          <button className="w-full rounded-lg border border-white/30 px-3 py-2 text-sm font-semibold text-white hover:bg-white/10" type="submit">
+            Log out
+          </button>
+        </form>
+      </aside>
+
+      <main className="container-page py-6 lg:py-8">{children}</main>
     </div>
   );
 }

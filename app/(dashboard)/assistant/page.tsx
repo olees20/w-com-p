@@ -15,15 +15,11 @@ export default async function AssistantPage() {
     data: { user }
   } = await supabase.auth.getUser();
 
-  if (!user) {
-    return null;
-  }
+  if (!user) return null;
 
   const { data: business } = await supabase.from("businesses").select("id").eq("user_id", user.id).maybeSingle<{ id: string }>();
 
-  if (!business) {
-    return null;
-  }
+  if (!business) return null;
 
   const { data: messages } = await supabase
     .from("ai_messages")
@@ -38,11 +34,9 @@ export default async function AssistantPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">AI Assistant</h1>
-        <p className="mt-1 text-sm text-slate-600">
-          Ask questions about your current compliance position using your WComp business records.
-        </p>
+      <div className="app-panel p-5">
+        <h1 className="text-2xl font-extrabold tracking-tight text-[#123026]">Ask anything about your compliance documents</h1>
+        <p className="mt-1 text-sm text-[#5f746d]">Get guidance from your business profile, uploaded records, alerts, and score.</p>
       </div>
       <AssistantChat initialMessages={initialMessages} />
     </div>
