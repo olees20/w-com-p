@@ -48,14 +48,81 @@ function mapStatusToUi(status: ComplianceStatus): { label: string; level: RiskLe
   return { label: "At Risk", level: "high" };
 }
 
+function scoreToRisk(score: number): RiskLevel {
+  if (score >= 80) return "low";
+  if (score >= 50) return "medium";
+  return "high";
+}
+
 function Badge({ level, label }: { level: RiskLevel; label: string }) {
   return <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-bold ${riskStyles[level]}`}>{label}</span>;
 }
 
-function Panel({ title, children }: { title: string; children: React.ReactNode }) {
+function ragSegments() {
+  return [
+    { from: 0, to: 49, color: "#DC2626" },
+    { from: 50, to: 79, color: "#F59E0B" },
+    { from: 80, to: 100, color: "#16A34A" }
+  ];
+}
+
+function ScoreWheel({ value, size = 96 }: { value: number; size?: number }) {
+  const clamped = Math.max(0, Math.min(100, value));
+  const stroke = 10;
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+
+  return (
+    <div className="relative" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={radius} stroke="#E5E7EB" strokeWidth={stroke} fill="none" />
+        {ragSegments().map((segment) => {
+          const segStart = (segment.from / 100) * circumference;
+          const segLength = ((segment.to - segment.from + 1) / 100) * circumference;
+          const segValue = Math.max(0, Math.min(clamped - segment.from + 1, segment.to - segment.from + 1));
+          const segDraw = (segValue / (segment.to - segment.from + 1)) * segLength;
+
+          return (
+            <circle
+              key={`${segment.from}-${segment.to}`}
+              cx={size / 2}
+              cy={size / 2}
+              r={radius}
+              stroke={segment.color}
+              strokeWidth={stroke}
+              fill="none"
+              strokeLinecap="round"
+              strokeDasharray={`${segDraw} ${circumference - segDraw}`}
+              strokeDashoffset={-segStart}
+            />
+          );
+        })}
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center text-[#111827]">
+        <div className="text-center">
+          <p className="text-2xl font-extrabold leading-none">{clamped}%</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TopCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="app-panel p-5">
-      <h2 className="text-sm font-bold text-[#111827]">{title}</h2>
+      <p className="text-sm font-bold text-[#111827]">{title}</p>
+      <div className="mt-4">{children}</div>
+    </section>
+  );
+}
+
+function Panel({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <section className="app-panel p-5">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-lg font-bold text-[#111827]">{title}</h2>
+        {action}
+      </div>
       <div className="mt-4">{children}</div>
     </section>
   );
@@ -119,45 +186,84 @@ export default async function DashboardPage() {
   await supabase.from("businesses").update({ compliance_score: scoring.score, compliance_status: scoring.status }).eq("id", business.id);
 
   const statusUi = mapStatusToUi(scoring.status);
-  const scoreRisk: RiskLevel = scoring.score >= 80 ? "low" : scoring.score >= 50 ? "medium" : "high";
+  const openHigh = openAlerts.filter((a) => a.severity === "high").length;
+  const openMedium = openAlerts.filter((a) => a.severity === "medium").length;
+  const auditReadiness = Math.max(0, Math.min(100, scoring.score - openHigh * 6 - openMedium * 3));
 
   return (
     <div className="space-y-5">
       <section className="app-panel p-6">
-        <p className="text-xs font-bold uppercase tracking-[0.12em] text-[#6B7280]">Compliance Health Summary</p>
-        <div className="mt-3 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-2xl font-extrabold tracking-tight text-[#111827]">Good morning, here’s your compliance overview.</h1>
-            <p className="mt-1 text-sm text-[#6B7280]">{scoring.explanation}</p>
+            <h1 className="text-3xl font-extrabold tracking-tight text-[#111827]">Good morning</h1>
+            <p className="mt-1 text-sm text-[#6B7280]">Here’s your compliance overview for today.</p>
           </div>
-          <div className="flex items-center gap-3">
-            <Badge level={statusUi.level} label={statusUi.label} />
-            <div className="rounded-xl bg-[#1E3A8A] px-4 py-2 text-white">
-              <p className="text-xs uppercase text-blue-100">Score</p>
-              <p className="text-lg font-extrabold">{scoring.score}%</p>
-            </div>
-          </div>
+          <Button>Upload Document</Button>
         </div>
       </section>
 
-      <div className="grid gap-4 xl:grid-cols-3">
-        <Panel title="Alerts & Actions">
-          <div className="space-y-3">
+      <div className="grid gap-4 xl:grid-cols-4">
+        <TopCard title="Compliance Status">
+          <div className="flex items-center gap-4">
+            <ScoreWheel value={scoring.score} />
+            <div>
+              <p className="text-xl font-extrabold text-[#111827]">{statusUi.label}</p>
+              <p className="text-sm text-[#6B7280]">Based on current evidence and open actions.</p>
+            </div>
+          </div>
+        </TopCard>
+
+        <TopCard title="Compliance Score">
+          <div className="flex items-center gap-4">
+            <ScoreWheel value={scoring.score} />
+            <div>
+              <p className="text-sm font-bold text-[#111827]">Score updated</p>
+              <p className="text-sm text-[#6B7280]">Calculated from profile, documents, and alerts.</p>
+            </div>
+          </div>
+        </TopCard>
+
+        <TopCard title="Open Alerts">
+          <div className="space-y-2">
+            <p className="text-4xl font-extrabold text-[#DC2626]">{openHigh + openMedium}</p>
+            <p className="text-sm text-[#DC2626]">{openHigh} high priority</p>
+            <p className="text-sm text-[#F59E0B]">{openMedium} medium priority</p>
+          </div>
+        </TopCard>
+
+        <TopCard title="Audit Readiness">
+          <div className="flex items-center gap-4">
+            <ScoreWheel value={auditReadiness} />
+            <div>
+              <p className="text-sm font-bold text-[#111827]">{auditReadiness >= 80 ? "Almost ready" : "Needs work"}</p>
+              <p className="text-sm text-[#6B7280]">Address open alerts to improve your score.</p>
+            </div>
+          </div>
+        </TopCard>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[1.35fr_1fr]">
+        <Panel title="Alerts & Actions" action={<Button variant="secondary">View all</Button>}>
+          <div className="space-y-2">
             {openAlerts.length ? (
               openAlerts.map((alert) => (
-                <article key={alert.id} className="rounded-xl border border-[#E5E7EB] bg-white p-3">
-                  <div className="flex items-start justify-between gap-2">
+                <article key={alert.id} className="flex items-start justify-between gap-3 rounded-xl border border-[#E5E7EB] p-3">
+                  <div>
                     <p className="text-sm font-semibold text-[#111827]">{alert.title}</p>
-                    <Badge level={alert.severity ?? "medium"} label={alert.severity ?? "medium"} />
+                    {alert.description ? <p className="mt-1 text-sm text-[#6B7280]">{alert.description}</p> : null}
+                    {alert.due_date ? <p className="mt-1 text-xs text-[#6B7280]">Due {formatDate(alert.due_date)}</p> : null}
                   </div>
-                  {alert.description ? <p className="mt-1 text-sm text-[#6B7280]">{alert.description}</p> : null}
-                  {alert.due_date ? <p className="mt-1 text-xs text-[#6B7280]">Due {formatDate(alert.due_date)}</p> : null}
-                  <form action={markAlertResolved} className="mt-2">
-                    <input type="hidden" name="alert_id" value={alert.id} />
-                    <Button type="submit" variant="secondary" className="w-full">
-                      Mark resolved
-                    </Button>
-                  </form>
+                  <div className="min-w-[120px] space-y-2">
+                    <div className="flex justify-end">
+                      <Badge level={alert.severity ?? "medium"} label={alert.severity ?? "medium"} />
+                    </div>
+                    <form action={markAlertResolved}>
+                      <input type="hidden" name="alert_id" value={alert.id} />
+                      <Button type="submit" variant="secondary" className="w-full">
+                        Mark resolved
+                      </Button>
+                    </form>
+                  </div>
                 </article>
               ))
             ) : (
@@ -166,41 +272,45 @@ export default async function DashboardPage() {
           </div>
         </Panel>
 
-        <Panel title="Recent Documents">
-          <div className="space-y-3">
-            <ul className="space-y-2">
-              {recentDocuments.length ? (
-                recentDocuments.map((doc) => (
-                  <li key={doc.id} className="rounded-lg border border-[#E5E7EB] bg-[#FFFFFF] p-3">
-                    <p className="text-sm font-semibold text-[#111827]">{doc.file_name}</p>
-                    <p className="mt-1 text-xs text-[#6B7280]">Uploaded {formatDate(doc.created_at)}</p>
-                  </li>
-                ))
-              ) : (
-                <li className="rounded-lg border border-[#E5E7EB] p-3 text-sm text-[#6B7280]">No documents uploaded yet.</li>
-              )}
-            </ul>
+        <Panel title="Recent Documents" action={<Button variant="secondary">View all</Button>}>
+          <div className="space-y-2">
+            {recentDocuments.length ? (
+              recentDocuments.map((doc) => {
+                const risk = doc.ai_risk_level === "high" ? "high" : doc.ai_risk_level === "medium" ? "medium" : "low";
+                return (
+                  <article key={doc.id} className="flex items-center justify-between gap-3 rounded-xl border border-[#E5E7EB] p-3">
+                    <div>
+                      <p className="text-sm font-semibold text-[#111827]">{doc.file_name}</p>
+                      <p className="text-xs text-[#6B7280]">Uploaded {formatDate(doc.created_at)}</p>
+                    </div>
+                    <Badge level={risk} label={risk === "low" ? "processed" : risk === "medium" ? "review" : "urgent"} />
+                  </article>
+                );
+              })
+            ) : (
+              <p className="text-sm text-[#6B7280]">No documents uploaded yet.</p>
+            )}
+          </div>
+          <div className="mt-3">
             <DocumentUpload />
           </div>
         </Panel>
-
-        <Panel title="Compliance Status">
-          <div className="space-y-3">
-            <div className="rounded-lg border border-[#E5E7EB] bg-[#FFFFFF] p-3">
-              <p className="text-sm font-semibold text-[#111827]">Current status</p>
-              <p className="mt-1 text-sm text-[#6B7280]">{statusUi.label}</p>
-            </div>
-            <div className="rounded-lg border border-[#E5E7EB] bg-[#FFFFFF] p-3">
-              <p className="text-sm font-semibold text-[#111827]">Risk level</p>
-              <p className="mt-1 text-sm text-[#6B7280]">{scoreRisk === "low" ? "Low" : scoreRisk === "medium" ? "Medium" : "High"}</p>
-            </div>
-            <Button className="w-full">Resolve critical actions</Button>
-            <Button href="/dashboard/assistant" variant="secondary" className="w-full">
-              Open assistant
-            </Button>
-          </div>
-        </Panel>
       </div>
+
+      <section className="app-panel p-5">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <p className="text-sm font-bold text-[#111827]">Ask Waste Compliance Monitor Assistant</p>
+            <p className="text-sm text-[#6B7280]">Get instant answers about your waste compliance.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button className="rounded-full border border-[#E5E7EB] bg-white px-3 py-1.5 text-sm font-semibold text-[#1E3A8A]" type="button">Am I compliant?</button>
+            <button className="rounded-full border border-[#E5E7EB] bg-white px-3 py-1.5 text-sm font-semibold text-[#1E3A8A]" type="button">What am I missing?</button>
+            <button className="rounded-full border border-[#E5E7EB] bg-white px-3 py-1.5 text-sm font-semibold text-[#1E3A8A]" type="button">What should I fix first?</button>
+            <Button href="/dashboard/assistant">Open Assistant</Button>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }
