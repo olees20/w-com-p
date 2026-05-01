@@ -19,9 +19,9 @@ export function DocumentUpload() {
   const [state, setState] = useState<UploadState>({});
 
   async function handleUpload() {
-    const file = inputRef.current?.files?.[0];
-    if (!file) {
-      setState({ error: "Please select a file first." });
+    const files = inputRef.current?.files;
+    if (!files?.length) {
+      setState({ error: "Please select at least one file first." });
       return;
     }
 
@@ -30,7 +30,9 @@ export function DocumentUpload() {
     setProgress(0);
 
     const formData = new FormData();
-    formData.append("file", file);
+    for (const file of Array.from(files)) {
+      formData.append("files", file);
+    }
 
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/api/documents/upload");
@@ -45,19 +47,37 @@ export function DocumentUpload() {
       setIsUploading(false);
 
       try {
-        const payload = JSON.parse(xhr.responseText) as { error?: string };
+        const payload = JSON.parse(xhr.responseText) as {
+          error?: string;
+          uploaded_count?: number;
+          failed_count?: number;
+          failures?: Array<{ file_name: string; error: string }>;
+        };
         if (xhr.status >= 400) {
           setState({ error: payload.error ?? "Upload failed." });
           return;
+        }
+
+        const uploaded = payload.uploaded_count ?? 0;
+        const failed = payload.failed_count ?? 0;
+        if (failed > 0) {
+          const firstFailure = payload.failures?.[0];
+          setState({
+            success: `${uploaded} document${uploaded === 1 ? "" : "s"} uploaded.`,
+            error: firstFailure ? `${failed} failed. First error: ${firstFailure.error}` : `${failed} failed during upload.`
+          });
+        } else {
+          setState({
+            success: `${uploaded} document${uploaded === 1 ? "" : "s"} uploaded successfully.`
+          });
         }
       } catch {
         if (xhr.status >= 400) {
           setState({ error: "Upload failed." });
           return;
         }
+        setState({ success: "Documents uploaded successfully." });
       }
-
-      setState({ success: "Document uploaded successfully." });
       setProgress(100);
       if (inputRef.current) {
         inputRef.current.value = "";
@@ -78,6 +98,7 @@ export function DocumentUpload() {
       <input
         ref={inputRef}
         type="file"
+        multiple
         accept={ACCEPT}
         className="block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-medium"
       />
@@ -95,7 +116,7 @@ export function DocumentUpload() {
       {state.success ? <p className="text-sm text-emerald-700">{state.success}</p> : null}
 
       <Button type="button" onClick={handleUpload} disabled={isUploading} className="w-full">
-        {isUploading ? "Uploading..." : "Upload new document"}
+        {isUploading ? "Uploading..." : "Upload document(s)"}
       </Button>
     </div>
   );
