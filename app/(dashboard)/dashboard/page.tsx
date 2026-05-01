@@ -5,6 +5,7 @@ import { calculateComplianceScore, type ComplianceStatus } from "@/lib/complianc
 import { runAlertMonitoringForBusiness } from "@/lib/alerts/monitoring";
 import { markAlertResolved } from "@/app/(dashboard)/dashboard/actions";
 import { requireActiveSubscription } from "@/lib/stripe/guards";
+import { DashboardAssistant } from "@/components/assistant/dashboard-assistant";
 
 type RiskLevel = "low" | "medium" | "high";
 
@@ -26,6 +27,11 @@ type AlertRow = {
   severity: "low" | "medium" | "high" | null;
   status: string | null;
   due_date: string | null;
+};
+
+type StoredMessage = {
+  role: "user" | "assistant";
+  content: string;
 };
 
 const riskStyles: Record<RiskLevel, string> = {
@@ -173,6 +179,17 @@ export default async function DashboardPage() {
 
   if (!alertsQuery.error) openAlerts = (alertsQuery.data ?? []) as AlertRow[];
 
+  const { data: messages } = await supabase
+    .from("ai_messages")
+    .select("role,content")
+    .eq("business_id", business.id)
+    .order("created_at", { ascending: true })
+    .limit(100);
+
+  const initialMessages = ((messages ?? []) as StoredMessage[]).filter(
+    (m) => (m.role === "user" || m.role === "assistant") && typeof m.content === "string"
+  );
+
   const scoring = calculateComplianceScore({
     businessProfile: {
       id: business.id,
@@ -297,20 +314,7 @@ export default async function DashboardPage() {
         </Panel>
       </div>
 
-      <section className="app-panel p-5">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <p className="text-sm font-bold text-[#111827]">Ask Waste Compliance Monitor Assistant</p>
-            <p className="text-sm text-[#6B7280]">Get instant answers about your waste compliance.</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button className="rounded-full border border-[#E5E7EB] bg-white px-3 py-1.5 text-sm font-semibold text-[#1E3A8A]" type="button">Am I compliant?</button>
-            <button className="rounded-full border border-[#E5E7EB] bg-white px-3 py-1.5 text-sm font-semibold text-[#1E3A8A]" type="button">What am I missing?</button>
-            <button className="rounded-full border border-[#E5E7EB] bg-white px-3 py-1.5 text-sm font-semibold text-[#1E3A8A]" type="button">What should I fix first?</button>
-            <Button href="/dashboard/assistant">Open Assistant</Button>
-          </div>
-        </div>
-      </section>
+      <DashboardAssistant initialMessages={initialMessages} />
     </div>
   );
 }
