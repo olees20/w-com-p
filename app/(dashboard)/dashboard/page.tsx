@@ -29,9 +29,9 @@ type AlertRow = {
 };
 
 const riskStyles: Record<RiskLevel, string> = {
-  low: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  medium: "bg-amber-50 text-amber-700 border-amber-200",
-  high: "bg-red-50 text-red-700 border-red-200"
+  low: "bg-green-50 text-[#16A34A] border-green-200",
+  medium: "bg-amber-50 text-[#F59E0B] border-amber-200",
+  high: "bg-red-50 text-[#DC2626] border-red-200"
 };
 
 function formatDate(value: string) {
@@ -55,7 +55,7 @@ function Badge({ level, label }: { level: RiskLevel; label: string }) {
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="app-panel p-5">
-      <h2 className="text-sm font-bold text-[#1c3a31]">{title}</h2>
+      <h2 className="text-sm font-bold text-[#111827]">{title}</h2>
       <div className="mt-4">{children}</div>
     </section>
   );
@@ -124,16 +124,16 @@ export default async function DashboardPage() {
   return (
     <div className="space-y-5">
       <section className="app-panel p-6">
-        <p className="text-xs font-bold uppercase tracking-[0.12em] text-[#4a6a60]">Compliance Health Summary</p>
+        <p className="text-xs font-bold uppercase tracking-[0.12em] text-[#6B7280]">Compliance Health Summary</p>
         <div className="mt-3 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <h1 className="text-2xl font-extrabold tracking-tight text-[#123026]">Are we compliant right now?</h1>
-            <p className="mt-1 text-sm text-[#5b746b]">{scoring.explanation}</p>
+            <h1 className="text-2xl font-extrabold tracking-tight text-[#111827]">Good morning, here’s your compliance overview.</h1>
+            <p className="mt-1 text-sm text-[#6B7280]">{scoring.explanation}</p>
           </div>
           <div className="flex items-center gap-3">
             <Badge level={statusUi.level} label={statusUi.label} />
-            <div className="rounded-xl bg-[#0f4b3b] px-4 py-2 text-white">
-              <p className="text-xs uppercase text-emerald-100">Score</p>
+            <div className="rounded-xl bg-[#1E3A8A] px-4 py-2 text-white">
+              <p className="text-xs uppercase text-blue-100">Score</p>
               <p className="text-lg font-extrabold">{scoring.score}%</p>
             </div>
           </div>
@@ -141,17 +141,17 @@ export default async function DashboardPage() {
       </section>
 
       <div className="grid gap-4 xl:grid-cols-3">
-        <Panel title="Open Alerts">
+        <Panel title="Alerts & Actions">
           <div className="space-y-3">
             {openAlerts.length ? (
               openAlerts.map((alert) => (
-                <article key={alert.id} className="rounded-xl border border-[#dce6e2] bg-white p-3">
+                <article key={alert.id} className="rounded-xl border border-[#E5E7EB] bg-white p-3">
                   <div className="flex items-start justify-between gap-2">
-                    <p className="text-sm font-semibold text-[#1c3a31]">{alert.title}</p>
+                    <p className="text-sm font-semibold text-[#111827]">{alert.title}</p>
                     <Badge level={alert.severity ?? "medium"} label={alert.severity ?? "medium"} />
                   </div>
-                  {alert.description ? <p className="mt-1 text-sm text-[#5f746d]">{alert.description}</p> : null}
-                  {alert.due_date ? <p className="mt-1 text-xs text-[#7a8f88]">Due {formatDate(alert.due_date)}</p> : null}
+                  {alert.description ? <p className="mt-1 text-sm text-[#6B7280]">{alert.description}</p> : null}
+                  {alert.due_date ? <p className="mt-1 text-xs text-[#6B7280]">Due {formatDate(alert.due_date)}</p> : null}
                   <form action={markAlertResolved} className="mt-2">
                     <input type="hidden" name="alert_id" value={alert.id} />
                     <Button type="submit" variant="secondary" className="w-full">
@@ -161,7 +161,7 @@ export default async function DashboardPage() {
                 </article>
               ))
             ) : (
-              <p className="text-sm text-[#5f746d]">No open alerts.</p>
+              <p className="text-sm text-[#6B7280]">No open alerts.</p>
             )}
           </div>
         </Panel>
@@ -171,32 +171,32 @@ export default async function DashboardPage() {
             <ul className="space-y-2">
               {recentDocuments.length ? (
                 recentDocuments.map((doc) => (
-                  <li key={doc.id} className="rounded-lg border border-[#dce6e2] bg-[#fafcfb] p-3">
-                    <p className="text-sm font-semibold text-[#1d3a31]">{doc.file_name}</p>
-                    <p className="mt-1 text-xs text-[#6f857e]">Uploaded {formatDate(doc.created_at)}</p>
+                  <li key={doc.id} className="rounded-lg border border-[#E5E7EB] bg-[#FFFFFF] p-3">
+                    <p className="text-sm font-semibold text-[#111827]">{doc.file_name}</p>
+                    <p className="mt-1 text-xs text-[#6B7280]">Uploaded {formatDate(doc.created_at)}</p>
                   </li>
                 ))
               ) : (
-                <li className="rounded-lg border border-[#dce6e2] p-3 text-sm text-[#5f746d]">No documents uploaded yet.</li>
+                <li className="rounded-lg border border-[#E5E7EB] p-3 text-sm text-[#6B7280]">No documents uploaded yet.</li>
               )}
             </ul>
             <DocumentUpload />
           </div>
         </Panel>
 
-        <Panel title="Action Center">
+        <Panel title="Compliance Status">
           <div className="space-y-3">
-            <div className="rounded-lg border border-[#dce6e2] bg-[#fafcfb] p-3">
-              <p className="text-sm font-semibold text-[#1d3a31]">Compliance status</p>
-              <p className="mt-1 text-sm text-[#5f746d]">{statusUi.label}</p>
+            <div className="rounded-lg border border-[#E5E7EB] bg-[#FFFFFF] p-3">
+              <p className="text-sm font-semibold text-[#111827]">Current status</p>
+              <p className="mt-1 text-sm text-[#6B7280]">{statusUi.label}</p>
             </div>
-            <div className="rounded-lg border border-[#dce6e2] bg-[#fafcfb] p-3">
-              <p className="text-sm font-semibold text-[#1d3a31]">Risk level</p>
-              <p className="mt-1 text-sm text-[#5f746d]">{scoreRisk === "low" ? "Low" : scoreRisk === "medium" ? "Moderate" : "High"}</p>
+            <div className="rounded-lg border border-[#E5E7EB] bg-[#FFFFFF] p-3">
+              <p className="text-sm font-semibold text-[#111827]">Risk level</p>
+              <p className="mt-1 text-sm text-[#6B7280]">{scoreRisk === "low" ? "Low" : scoreRisk === "medium" ? "Medium" : "High"}</p>
             </div>
             <Button className="w-full">Resolve critical actions</Button>
             <Button href="/dashboard/assistant" variant="secondary" className="w-full">
-              Ask AI Assistant
+              Open assistant
             </Button>
           </div>
         </Panel>

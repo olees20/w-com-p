@@ -5,7 +5,7 @@ import { createServerClient } from "@/lib/supabase/server";
 import { logoutAction } from "@/app/(auth)/actions";
 
 const nav = [
-  { href: "/dashboard", label: "Overview" },
+  { href: "/dashboard", label: "Dashboard" },
   { href: "/dashboard/assistant", label: "AI Assistant" },
   { href: "/dashboard/billing", label: "Billing" },
   { href: "/dashboard/audit-pack", label: "Audit Pack" },
@@ -18,15 +18,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
     data: { user }
   } = await supabase.auth.getUser();
 
-  if (!user) {
-    redirect("/login");
-  }
+  if (!user) redirect("/login");
 
   const { data: business } = await supabase.from("businesses").select("id").eq("user_id", user.id).maybeSingle();
 
-  if (!business) {
-    redirect("/onboarding");
-  }
+  if (!business) redirect("/onboarding");
 
   return (
     <div className="app-shell lg:grid lg:grid-cols-[260px_1fr]">
@@ -40,7 +36,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
             <Link
               key={item.href}
               href={item.href}
-              className="block rounded-lg px-3 py-2 text-sm text-emerald-50/90 transition hover:bg-white/10 hover:text-white"
+              className="block rounded-lg px-3 py-2 text-sm text-blue-100 transition hover:bg-[#3B82F6]/30 hover:text-white"
             >
               {item.label}
             </Link>
@@ -49,7 +45,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
         <div className="mt-8 rounded-xl border border-white/20 bg-white/10 p-4 text-sm">
           <p className="font-semibold">Your data is private and secure</p>
-          <p className="mt-1 text-emerald-100/90">We never use your documents to train AI models.</p>
+          <p className="mt-1 text-blue-100/90">We never use your documents to train AI models.</p>
         </div>
 
         <form action={logoutAction} className="mt-6">

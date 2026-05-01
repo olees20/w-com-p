@@ -13,8 +13,8 @@ export function Button({ children, variant = "primary", href, type = "button", c
 
   const tone =
     variant === "primary"
-      ? "bg-[#0f5b46] text-white hover:bg-[#0c4939] focus:ring-[#0f5b46] disabled:bg-[#7fb2a2]"
-      : "border border-[#cfe0da] bg-white text-[#21453a] hover:bg-[#f2f7f5] focus:ring-[#cfe0da] disabled:text-[#89a39a]";
+      ? "bg-[#1E3A8A] text-white hover:bg-[#1a3279] focus:ring-[#3B82F6] disabled:bg-[#9bb0e4]"
+      : "border border-[#E5E7EB] bg-white text-[#111827] hover:bg-[#F9FAFB] focus:ring-[#93C5FD] disabled:text-[#9CA3AF]";
 
   const classes = `${base} ${tone} ${className}`.trim();
 

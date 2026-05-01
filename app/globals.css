@@ -4,20 +4,22 @@
 
 :root {
   color-scheme: light;
-  --bg: #f5f7f6;
-  --panel: #ffffff;
-  --ink: #132822;
-  --muted: #5f746d;
-  --line: #dce6e2;
-  --brand-1: #0a3b31;
-  --brand-2: #0f5b46;
-  --brand-3: #1a7a5e;
+  --primary: #1e3a8a;
+  --accent: #3b82f6;
+  --success: #16a34a;
+  --warning: #f59e0b;
+  --danger: #dc2626;
+  --bg: #f9fafb;
+  --card: #ffffff;
+  --text: #111827;
+  --muted: #6b7280;
+  --border: #e5e7eb;
 }
 
 body {
   @apply antialiased;
-  background: radial-gradient(circle at 0% 0%, #e6f1ec 0%, var(--bg) 35%, var(--bg) 100%);
-  color: var(--ink);
+  background: var(--bg);
+  color: var(--text);
 }
 
 .container-page {
@@ -25,15 +27,18 @@ body {
 }
 
 .app-shell {
-  @apply min-h-screen bg-[#f3f6f5];
+  @apply min-h-screen;
+  background: var(--bg);
 }
 
 .app-panel {
-  @apply rounded-2xl border border-[#dce6e2] bg-white shadow-[0_1px_1px_rgba(9,30,20,0.04),0_12px_24px_rgba(9,30,20,0.05)];
+  @apply rounded-2xl border bg-white;
+  border-color: var(--border);
+  box-shadow: 0 1px 1px rgba(17, 24, 39, 0.03), 0 10px 20px rgba(17, 24, 39, 0.04);
 }
 
 .app-sidebar {
-  background: radial-gradient(130% 110% at 10% 0%, #17624d 0%, #0b3b31 46%, #082920 100%);
+  background: linear-gradient(180deg, #1e3a8a 0%, #172554 100%);
 }
 
 .app-subtle {
