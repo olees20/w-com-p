@@ -1,14 +1,15 @@
 import Link from "next/link";
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
 
 const faqs = [
   {
-    q: "Who is WComp for?",
+    q: "Who is Waste Compliance Monitor for?",
     a: "Small UK businesses including cafes, restaurants, salons, offices, workshops, and small warehouses."
   },
   {
     q: "Do I need compliance expertise?",
-    a: "No. WComp translates records and risk into practical actions for your team."
+    a: "No. Waste Compliance Monitor translates records and risk into practical actions for your team."
   },
   {
     q: "Can I prepare for inspections quickly?",
@@ -21,8 +22,8 @@ export default function LandingPage() {
     <main className="min-h-screen text-[#143027]">
       <header className="border-b border-[#d8e5df] bg-white/80 backdrop-blur">
         <div className="container-page flex h-16 items-center justify-between">
-          <Link href="/" className="text-xl font-extrabold tracking-tight text-[#0f4336]">
-            WComp
+          <Link href="/" className="inline-flex items-center">
+            <Image src="/logo-sml.png" alt="Waste Compliance Monitor" width={168} height={38} priority />
           </Link>
           <div className="flex items-center gap-3">
             <Link href="/login" className="text-sm font-semibold text-[#557067]">
@@ -38,7 +39,7 @@ export default function LandingPage() {
           <div>
             <p className="text-sm font-bold uppercase tracking-[0.12em] text-[#2a6d59]">Waste Compliance Monitor</p>
             <h1 className="mt-3 text-4xl font-extrabold tracking-tight sm:text-5xl">
-              WComp monitors your waste compliance so your business is always inspection-ready.
+              Waste Compliance Monitor monitors your waste compliance so your business is always inspection-ready.
             </h1>
             <p className="mt-4 max-w-2xl text-lg text-[#5c746c]">
               Keep documents, alerts, and audit readiness in one system. Know what is missing, what is urgent, and what to fix first.

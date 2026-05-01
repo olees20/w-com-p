@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { redirect } from "next/navigation";
 import { createServerClient } from "@/lib/supabase/server";
 import { logoutAction } from "@/app/(auth)/actions";
@@ -30,10 +31,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
   return (
     <div className="app-shell lg:grid lg:grid-cols-[260px_1fr]">
       <aside className="app-sidebar p-5 text-white lg:sticky lg:top-0 lg:h-screen">
-        <Link href="/dashboard" className="block text-xl font-extrabold tracking-tight">
-          WComp
+        <Link href="/dashboard" className="inline-flex items-center">
+          <Image src="/logo-sml-white.png" alt="Waste Compliance Monitor" width={168} height={38} priority />
         </Link>
-        <p className="mt-1 text-xs text-emerald-100/80">Waste Compliance Monitor</p>
 
         <nav className="mt-8 space-y-1">
           {nav.map((item) => (

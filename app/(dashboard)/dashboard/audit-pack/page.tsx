@@ -110,7 +110,7 @@ export default async function AuditPackPage() {
     <div className="space-y-6 print:space-y-4">
       <div className="flex items-start justify-between gap-4 print:block">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-slate-900">WComp Audit Pack</h1>
+          <h1 className="text-3xl font-semibold tracking-tight text-slate-900">Waste Compliance Monitor Audit Pack</h1>
           <p className="mt-1 text-sm text-slate-600">Generated {formatDate(generatedAt)}</p>
         </div>
         <PrintButton />

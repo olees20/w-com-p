@@ -6,7 +6,7 @@ export default function PricingPage() {
       <section className="container-page py-14">
         <div className="mx-auto max-w-3xl text-center">
           <h1 className="text-4xl font-semibold tracking-tight text-slate-900">Simple pricing for compliance teams</h1>
-          <p className="mt-3 text-slate-600">Start with one location and all core WComp compliance features.</p>
+          <p className="mt-3 text-slate-600">Start with one location and all core Waste Compliance Monitor compliance features.</p>
         </div>
 
         <div className="mx-auto mt-10 max-w-xl rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">

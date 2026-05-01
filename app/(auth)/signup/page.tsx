@@ -17,7 +17,7 @@ export default async function SignUpPage() {
   return (
     <AuthShell
       title="Create account"
-      description="Start your WComp workspace"
+      description="Start your Waste Compliance Monitor workspace"
       footerText="Already have an account?"
       footerLinkText="Log in"
       footerHref="/login"

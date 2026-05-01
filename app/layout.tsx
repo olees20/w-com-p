@@ -8,7 +8,7 @@ const manrope = Manrope({
 });
 
 export const metadata: Metadata = {
-  title: "WComp",
+  title: "Waste Compliance Monitor",
   description: "Waste Compliance Monitor"
 };
 
