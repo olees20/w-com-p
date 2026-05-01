@@ -1,11 +1,21 @@
 "use client";
 
-import { useActionState } from "react";
+import { useFormState, useFormStatus } from "react-dom";
 import { saveBusinessOnboarding, type OnboardingState } from "@/app/onboarding/actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 const initialState: OnboardingState = {};
+
+function SubmitButton() {
+  const { pending } = useFormStatus();
+
+  return (
+    <Button type="submit" disabled={pending} className="w-full">
+      {pending ? "Saving profile..." : "Continue to dashboard"}
+    </Button>
+  );
+}
 
 function CheckboxField({ name, label }: { name: string; label: string }) {
   return (
@@ -17,7 +27,7 @@ function CheckboxField({ name, label }: { name: string; label: string }) {
 }
 
 export function BusinessOnboardingForm() {
-  const [state, formAction, pending] = useActionState(saveBusinessOnboarding, initialState);
+  const [state, formAction] = useFormState(saveBusinessOnboarding, initialState);
 
   return (
     <form action={formAction} className="space-y-4">
@@ -38,9 +48,7 @@ export function BusinessOnboardingForm() {
         <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{state.error}</p>
       ) : null}
 
-      <Button type="submit" disabled={pending} className="w-full">
-        {pending ? "Saving profile..." : "Continue to dashboard"}
-      </Button>
+      <SubmitButton />
     </form>
   );
 }

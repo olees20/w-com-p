@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useFormState, useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { AuthActionState } from "@/app/(auth)/actions";
@@ -12,8 +12,18 @@ type AuthFormProps = {
 
 const initialState: AuthActionState = {};
 
+function SubmitButton({ mode }: { mode: "login" | "signup" }) {
+  const { pending } = useFormStatus();
+
+  return (
+    <Button type="submit" disabled={pending} className="w-full">
+      {pending ? "Please wait..." : mode === "login" ? "Log in" : "Create account"}
+    </Button>
+  );
+}
+
 export function AuthForm({ mode, action }: AuthFormProps) {
-  const [state, formAction, pending] = useActionState(action, initialState);
+  const [state, formAction] = useFormState(action, initialState);
 
   return (
     <form action={formAction} className="space-y-4">
@@ -34,9 +44,7 @@ export function AuthForm({ mode, action }: AuthFormProps) {
         <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{state.success}</p>
       ) : null}
 
-      <Button type="submit" disabled={pending} className="w-full">
-        {pending ? "Please wait..." : mode === "login" ? "Log in" : "Create account"}
-      </Button>
+      <SubmitButton mode={mode} />
     </form>
   );
 }
