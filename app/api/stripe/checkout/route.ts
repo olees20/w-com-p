@@ -13,6 +13,11 @@ export async function POST() {
     return NextResponse.redirect(`${siteUrl}/login`, { status: 303 });
   }
 
+  if (user.email?.toLowerCase() === "admin@lithmira.com") {
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+    return NextResponse.redirect(`${siteUrl}/dashboard/billing?admin_exempt=true`, { status: 303 });
+  }
+
   if (!STRIPE_PRICE_ID_STARTER) {
     return NextResponse.json({ error: "Missing STRIPE_PRICE_ID_STARTER." }, { status: 500 });
   }

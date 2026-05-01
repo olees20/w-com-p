@@ -14,6 +14,10 @@ export async function POST() {
     return NextResponse.redirect(`${siteUrl}/login`, { status: 303 });
   }
 
+  if (user.email?.toLowerCase() === "admin@lithmira.com") {
+    return NextResponse.redirect(`${siteUrl}/dashboard/billing?admin_exempt=true`, { status: 303 });
+  }
+
   const { data: subscription } = await supabase
     .from("subscriptions")
     .select("stripe_customer_id")

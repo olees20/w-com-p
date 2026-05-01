@@ -14,6 +14,7 @@ export default async function BillingPage() {
   }
 
   const { subscription, isActive } = await getCurrentUserSubscription();
+  const isAdminBypass = user.email?.toLowerCase() === "admin@lithmira.com";
 
   return (
     <main className="min-h-screen bg-slate-50">
@@ -26,31 +27,37 @@ export default async function BillingPage() {
 
           <div className="mt-5 rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
             <p>
-              Status: <span className="font-medium">{subscription?.status ?? "inactive"}</span>
+              Status: <span className="font-medium">{isAdminBypass ? "active (admin exempt)" : subscription?.status ?? "inactive"}</span>
             </p>
             <p className="mt-1">Plan: starter</p>
             <p className="mt-1">Next billing date: {subscription?.current_period_end ?? "N/A"}</p>
           </div>
 
-          <div className="mt-5 grid gap-3 sm:grid-cols-2">
-            <form action="/api/stripe/checkout" method="POST">
-              <button
-                type="submit"
-                className="inline-flex w-full items-center justify-center rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
-              >
-                {isActive ? "Change plan" : "Activate subscription"}
-              </button>
-            </form>
+          {isAdminBypass ? (
+            <div className="mt-5 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
+              This account is exempt from billing and has full feature access.
+            </div>
+          ) : (
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <form action="/api/stripe/checkout" method="POST">
+                <button
+                  type="submit"
+                  className="inline-flex w-full items-center justify-center rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
+                >
+                  {isActive ? "Change plan" : "Activate subscription"}
+                </button>
+              </form>
 
-            <form action="/api/stripe/billing-portal" method="POST">
-              <button
-                type="submit"
-                className="inline-flex w-full items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-              >
-                Open billing portal
-              </button>
-            </form>
-          </div>
+              <form action="/api/stripe/billing-portal" method="POST">
+                <button
+                  type="submit"
+                  className="inline-flex w-full items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Open billing portal
+                </button>
+              </form>
+            </div>
+          )}
 
           <div className="mt-5 text-sm">
             <Link href="/dashboard" className="text-brand-700">

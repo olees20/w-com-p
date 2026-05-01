@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { createServerClient } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export type AuthActionState = {
   error?: string;
@@ -43,17 +44,23 @@ export async function signupAction(_: AuthActionState, formData: FormData): Prom
   }
 
   const supabase = await createServerClient();
-  const { data, error } = await supabase.auth.signUp({ email, password });
+  const { error } = await supabaseAdmin.auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true
+  });
 
   if (error) {
     return { error: error.message };
   }
 
-  if (data.session) {
-    redirect("/dashboard");
+  const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+
+  if (signInError) {
+    return { error: signInError.message };
   }
 
-  return { success: "Account created. Check your email to confirm your account." };
+  redirect("/dashboard");
 }
 
 export async function logoutAction() {

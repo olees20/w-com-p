@@ -1,6 +1,7 @@
 import { createServerClient } from "@/lib/supabase/server";
 
 const ACTIVE_STATUSES = new Set(["active", "trialing", "past_due"]);
+const ADMIN_BYPASS_EMAIL = "admin@lithmira.com";
 
 export async function getCurrentUserSubscription() {
   const supabase = await createServerClient();
@@ -10,6 +11,22 @@ export async function getCurrentUserSubscription() {
 
   if (!user) {
     return { user: null, business: null, subscription: null, isActive: false };
+  }
+
+  if (user.email?.toLowerCase() === ADMIN_BYPASS_EMAIL) {
+    return {
+      user,
+      business: null,
+      subscription: {
+        id: "admin-bypass",
+        status: "active",
+        price_id: "starter-free-admin",
+        stripe_customer_id: null,
+        stripe_subscription_id: null,
+        current_period_end: null
+      },
+      isActive: true
+    };
   }
 
   const { data: subscription } = await supabase
