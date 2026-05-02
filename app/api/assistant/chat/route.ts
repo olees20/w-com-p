@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase/server";
+import { formatGuidanceContext, retrieveRegulatoryGuidance } from "@/lib/regulatory/retrieval";
+import { syncBusinessRuleStatuses } from "@/lib/regulatory/rules";
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_MODEL = process.env.OPENAI_MODEL_ASSISTANT || "gpt-4.1-mini";
@@ -22,8 +24,9 @@ function buildContextText(params: {
   business: BusinessContext;
   documents: Array<{ file_name: string; document_type: string | null; ai_summary: string | null; ai_risk_level: string | null }>;
   alerts: Array<{ title: string; description: string | null; severity: string | null; due_date: string | null }>;
+  ruleStatuses: Array<{ title: string; status: string; action_required: string }>;
 }) {
-  const { business, documents, alerts } = params;
+  const { business, documents, alerts, ruleStatuses } = params;
 
   const businessProfile = {
     name: business.name,
@@ -43,6 +46,7 @@ function buildContextText(params: {
       business_profile: businessProfile,
       uploaded_document_summaries: documents,
       open_alerts: alerts,
+      compliance_rule_statuses: ruleStatuses,
       compliance_score: business.compliance_score,
       compliance_status: business.compliance_status
     },
@@ -101,12 +105,20 @@ export async function POST(request: Request) {
       .order("created_at", { ascending: true })
       .limit(20)
   ]);
+  const ruleStatuses = await syncBusinessRuleStatuses(business.id);
+  const regulatoryChunks = await retrieveRegulatoryGuidance(message, 6);
 
   const contextText = buildContextText({
     business,
     documents: (documents ?? []) as Array<{ file_name: string; document_type: string | null; ai_summary: string | null; ai_risk_level: string | null }>,
-    alerts: (alerts ?? []) as Array<{ title: string; description: string | null; severity: string | null; due_date: string | null }>
+    alerts: (alerts ?? []) as Array<{ title: string; description: string | null; severity: string | null; due_date: string | null }>,
+    ruleStatuses: ruleStatuses.map((rule) => ({
+      title: rule.title,
+      status: rule.status,
+      action_required: rule.action_required
+    }))
   });
+  const guidanceContext = formatGuidanceContext(regulatoryChunks);
 
   await supabase.from("ai_messages").insert({
     user_id: user.id,
@@ -149,13 +161,17 @@ export async function POST(request: Request) {
             {
               type: "input_text",
               text:
-                "You are Waste Compliance Monitor Assistant. Answer using only the provided context data. Do not hallucinate laws, regulations, or legal requirements. If data is missing or uncertainty exists, clearly say you are unsure and advise the user to check official guidance or speak to a qualified advisor. Always include this exact sentence once in each reply: This is guidance only and not legal advice. Keep answers concise, practical, and prioritized."
+                "You are Waste Compliance Platform Assistant. For regulatory/legal claims, use only REGULATORY SOURCES provided in this prompt. Never use memory for legal claims. If the sources do not support the claim, explicitly say: I could not verify that from the stored official guidance. Include source title + URL under a Sources section. Answer format: 1) Short answer 2) What applies to your business 3) What you should do next 4) Sources. Always include this exact sentence once in each reply: This is guidance only and not legal advice."
             }
           ]
         },
         {
           role: "system",
           content: [{ type: "input_text", text: `CONTEXT:\n${contextText}` }]
+        },
+        {
+          role: "system",
+          content: [{ type: "input_text", text: `REGULATORY SOURCES:\n${guidanceContext}` }]
         },
         ...conversation,
         {

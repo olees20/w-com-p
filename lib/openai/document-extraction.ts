@@ -185,7 +185,104 @@ ${extractedTextSnippet}`
     throw new Error(`OpenAI extraction failed (${response.status}): ${text}`);
   }
 
-  return (await response.json()) as { output_text?: string };
+  return (await response.json()) as Record<string, unknown>;
+}
+
+function extractStructuredPayload(response: Record<string, unknown>) {
+  if (typeof response.output_text === "string" && response.output_text.trim().length > 0) {
+    return response.output_text;
+  }
+
+  const output = response.output;
+  if (Array.isArray(output)) {
+    for (const item of output) {
+      if (!item || typeof item !== "object") continue;
+      const content = (item as { content?: unknown }).content;
+      if (!Array.isArray(content)) continue;
+      for (const part of content) {
+        if (!part || typeof part !== "object") continue;
+        const parsed = (part as { parsed?: unknown }).parsed;
+        if (parsed && typeof parsed === "object") {
+          return JSON.stringify(parsed);
+        }
+        const text = (part as { text?: unknown }).text;
+        if (typeof text === "string" && text.trim().length > 0) {
+          return text;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+async function extractWithRetry(params: { fileId: string; text: string; fileName: string }) {
+  const first = await runExtraction(params);
+  const firstPayload = extractStructuredPayload(first);
+  console.log("OpenAI raw response (attempt 1)", JSON.stringify(first).slice(0, 6000));
+  if (firstPayload) {
+    try {
+      const parsed = validateStructuredExtraction(JSON.parse(firstPayload));
+      return parsed;
+    } catch (error) {
+      console.log("Structured parse failed (attempt 1)", error);
+    }
+  }
+
+  const retryResponse = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${OPENAI_API_KEY}`
+    },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      input: [
+        {
+          role: "system",
+          content: [{ type: "input_text", text: "Return ONLY valid JSON matching the schema. No markdown. No explanation." }]
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: `Extract structured fields from this UK waste compliance document.\nFile name: ${params.fileName}\nExtracted text snippet:\n${params.text.slice(0, 12000)}`
+            },
+            { type: "input_file", file_id: params.fileId }
+          ]
+        }
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "wcomp_document_extraction_retry",
+          strict: true,
+          schema: extractionSchema
+        }
+      }
+    })
+  });
+
+  if (!retryResponse.ok) {
+    const retryText = await retryResponse.text();
+    throw new Error(`OpenAI extraction retry failed (${retryResponse.status}): ${retryText}`);
+  }
+
+  const second = (await retryResponse.json()) as Record<string, unknown>;
+  console.log("OpenAI raw response (attempt 2)", JSON.stringify(second).slice(0, 6000));
+  const secondPayload = extractStructuredPayload(second);
+  if (!secondPayload) {
+    throw new Error("AI returned invalid structured output");
+  }
+
+  try {
+    const parsed = validateStructuredExtraction(JSON.parse(secondPayload));
+    return parsed;
+  } catch (error) {
+    console.log("Structured parse failed (attempt 2)", error);
+    throw new Error("AI returned invalid structured output");
+  }
 }
 
 export async function extractDocumentWithAI(params: {
@@ -197,17 +294,16 @@ export async function extractDocumentWithAI(params: {
     throw new Error("OPENAI_API_KEY is not set.");
   }
 
+  console.log("Extracted text length", params.extractedText.length);
+  console.log("Extracted text preview", params.extractedText.slice(0, 500));
+
   const uploaded = await uploadFileToOpenAI(params.file);
-  const response = await runExtraction({
+  const parsed = await extractWithRetry({
     fileId: uploaded.id,
     text: params.extractedText,
     fileName: params.file.name
   });
-
-  if (!response.output_text) {
-    throw new Error("No structured output returned.");
-  }
-
-  const parsed = validateStructuredExtraction(JSON.parse(response.output_text));
+  console.log("Parsed JSON", parsed);
+  console.log("Validation result", "ok");
   return parsed;
 }

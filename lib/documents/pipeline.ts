@@ -331,6 +331,7 @@ export async function processDocument(documentId: string) {
     }
 
     const text = await extractTextFromFile(doc.storage_path);
+    console.log("Extracted text length", text.length);
     console.log("Extracted text", text.slice(0, 500));
     const file = await readFileFromStorage(doc.storage_path, doc.file_name);
     if (file.type === "application/pdf" && text.trim().length === 0) {

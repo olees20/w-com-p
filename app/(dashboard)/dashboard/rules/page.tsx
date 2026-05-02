@@ -1,13 +1,7 @@
 import Link from "next/link";
 import { createServerClient } from "@/lib/supabase/server";
-import { buildComplianceRules, type RuleStatus } from "@/lib/compliance/rules";
-
-type Doc = {
-  id: string;
-  document_type: string | null;
-  expiry_date: string | null;
-  processing_status: "uploaded" | "processing" | "processed" | "review" | "failed" | null;
-};
+import { seedComplianceRules, syncBusinessRuleStatuses, type RuleStatus } from "@/lib/regulatory/rules";
+import { RefreshGuidanceButton } from "@/components/admin/refresh-guidance-button";
 
 function statusClasses(status: RuleStatus) {
   if (status === "complete") return "bg-green-50 border-green-200 text-[#16A34A]";
@@ -27,29 +21,26 @@ export default async function RulesPage() {
     data: { user }
   } = await supabase.auth.getUser();
   if (!user) return null;
+  const isAdmin = user.email?.toLowerCase() === "admin@lithmira.com";
 
   const { data: business } = await supabase
     .from("businesses")
-    .select("id,produces_food_waste")
+    .select("id")
     .eq("user_id", user.id)
-    .maybeSingle<{ id: string; produces_food_waste: boolean | null }>();
+    .maybeSingle<{ id: string }>();
 
   if (!business) return null;
 
-  const { data: docs } = await supabase
-    .from("documents")
-    .select("id,document_type,expiry_date,processing_status")
-    .eq("business_id", business.id);
-
-  const rules = buildComplianceRules({
-    business: { produces_food_waste: business.produces_food_waste },
-    documents: (docs ?? []) as Doc[]
-  });
+  await seedComplianceRules();
+  const rules = await syncBusinessRuleStatuses(business.id);
 
   return (
     <div className="space-y-4">
       <section className="app-panel p-5">
-        <h1 className="text-2xl font-extrabold tracking-tight text-[#111827]">Compliance Rules</h1>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-2xl font-extrabold tracking-tight text-[#111827]">Compliance Rules</h1>
+          {isAdmin ? <RefreshGuidanceButton /> : null}
+        </div>
         <p className="mt-1 text-sm text-[#6B7280]">Requirements that apply to your business based on profile and processed documents.</p>
       </section>
 
