@@ -6,11 +6,13 @@ import { createServerClient } from "@/lib/supabase/server";
 type SidebarItem = {
   href: string;
   label: string;
-  icon: "dashboard" | "audit" | "pack" | "billing" | "settings" | "account";
+  icon: "dashboard" | "documents" | "rules" | "audit" | "pack" | "billing" | "settings" | "account";
 };
 
 const primaryNav: SidebarItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: "dashboard" },
+  { href: "/dashboard/documents", label: "Documents", icon: "documents" },
+  { href: "/dashboard/rules", label: "Rules", icon: "rules" },
   { href: "/dashboard/assistant", label: "Audit Log", icon: "audit" },
   { href: "/dashboard/audit-pack", label: "Audit Pack", icon: "pack" }
 ];
@@ -35,6 +37,22 @@ function SidebarIcon({ icon }: { icon: SidebarItem["icon"] }) {
       <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <path d="M9 11l3 3L22 4" />
         <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+      </svg>
+    );
+  }
+  if (icon === "documents") {
+    return (
+      <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16l4-2 4 2 4-2 4 2V8z" />
+        <path d="M14 2v6h6" />
+      </svg>
+    );
+  }
+  if (icon === "rules") {
+    return (
+      <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M8 6h13M8 12h13M8 18h13" />
+        <path d="M3 6h.01M3 12h.01M3 18h.01" />
       </svg>
     );
   }

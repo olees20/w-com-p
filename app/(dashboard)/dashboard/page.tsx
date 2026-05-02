@@ -50,6 +50,15 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+function documentTypeLabel(value: string | null) {
+  if (value === "waste_transfer_note") return "WTN";
+  if (value === "carrier_licence") return "Licence";
+  if (value === "invoice") return "Invoice";
+  if (value === "recycling_report") return "Recycling report";
+  if (value === "contract") return "Contract";
+  return "Unknown";
+}
+
 function mapStatusToUi(status: ComplianceStatus): { label: string; level: RiskLevel } {
   if (status === "compliant") return { label: "Compliant", level: "low" };
   if (status === "attention_needed") return { label: "Attention Needed", level: "medium" };
@@ -276,7 +285,7 @@ export default async function DashboardPage() {
           </div>
         </Panel>
 
-        <Panel title="Recent Documents" action={<Button variant="secondary">View all</Button>}>
+        <Panel title="Recent Documents" action={<Button variant="secondary" href="/dashboard/documents">View all</Button>}>
           <div className="space-y-2">
             {recentDocuments.length ? (
               recentDocuments.map((doc) => {
@@ -300,7 +309,9 @@ export default async function DashboardPage() {
                   <article key={doc.id} className="flex items-center justify-between gap-3 rounded-xl border border-[#E5E7EB] p-3">
                     <div>
                       <p className="text-sm font-semibold text-[#111827]">{doc.file_name}</p>
-                      <p className="text-xs text-[#6B7280]">Uploaded {formatDate(doc.created_at)}</p>
+                      <p className="text-xs text-[#6B7280]">
+                        {documentTypeLabel(doc.document_type)} • Uploaded {formatDate(doc.created_at)}
+                      </p>
                       {status === "failed" && doc.processing_error ? (
                         <p className="mt-1 text-xs text-[#DC2626]">Error: {doc.processing_error}</p>
                       ) : null}

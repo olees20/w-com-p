@@ -104,7 +104,9 @@ async function uploadFileToOpenAI(file: File) {
   return (await response.json()) as { id: string };
 }
 
-async function runExtraction(fileId: string) {
+async function runExtraction(fileId: string, context?: { text?: string; fileName?: string }) {
+  const extractedTextSnippet = (context?.text ?? "").slice(0, 12000);
+  const fileName = context?.fileName ?? "unknown-file";
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
@@ -130,7 +132,10 @@ async function runExtraction(fileId: string) {
             {
               type: "input_text",
               text:
-                "Classify and extract: supplier name, document date, expiry date, waste type, risk level (low/medium/high), short summary, and missing information."
+                `Classify and extract: supplier name, document date, expiry date, waste type, EWC code, licence number, risk level (low/medium/high), short summary, and missing information.
+File name: ${fileName}
+Extracted text snippet:
+${extractedTextSnippet || "[no text extracted]"}`
             },
             {
               type: "input_file",
@@ -158,14 +163,18 @@ async function runExtraction(fileId: string) {
   return (await response.json()) as { output_text?: string };
 }
 
-export async function extractDocumentWithAI(file: File, businessProfile?: { name?: string | null; business_type?: string | null }): Promise<ExtractedDocument> {
+export async function extractDocumentWithAI(
+  file: File,
+  businessProfile?: { name?: string | null; business_type?: string | null },
+  extractedText?: string
+): Promise<ExtractedDocument> {
   if (!OPENAI_API_KEY) {
     return fallbackExtraction("OPENAI_API_KEY is not set.");
   }
 
   try {
     const uploaded = await uploadFileToOpenAI(file);
-    const extracted = await runExtraction(uploaded.id);
+    const extracted = await runExtraction(uploaded.id, { text: extractedText, fileName: file.name });
 
     if (!extracted.output_text) {
       return fallbackExtraction("No structured output returned.");
