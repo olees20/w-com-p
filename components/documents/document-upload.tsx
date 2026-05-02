@@ -144,7 +144,9 @@ export function DocumentUpload() {
                 <div className="h-full bg-[#3B82F6] transition-all" style={{ width: `${item.progress}%` }} />
               </div>
               <div className="mt-1">
-                <DocumentProcessingProgress status={item.status === "waiting" ? "uploaded" : item.status} />
+                <DocumentProcessingProgress
+                  status={item.status === "waiting" ? "uploaded" : item.status === "uploading" ? "processing" : item.status}
+                />
               </div>
               {item.error ? <p className="mt-1 text-xs text-red-700">{item.error}</p> : null}
             </div>
