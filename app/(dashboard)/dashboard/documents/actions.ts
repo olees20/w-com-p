@@ -30,20 +30,19 @@ export async function rescanDocumentAction(formData: FormData) {
   if (!user) return;
 
   const doc = await getOwnedDocument(documentId, user.id);
-
-  await supabaseAdmin
-    .from("alerts")
-    .update({ status: "resolved", resolved_at: new Date().toISOString() })
-    .eq("document_id", doc.id)
-    .eq("status", "open");
-
-  await supabaseAdmin.from("documents").update({ processing_status: "processing", processing_error: null }).eq("id", doc.id);
-  await processDocument(doc.id);
-
-  revalidatePath("/dashboard");
-  revalidatePath("/dashboard/documents");
-  revalidatePath(`/dashboard/documents/${doc.id}`);
-  revalidatePath("/dashboard/assistant");
+  try {
+    await supabaseAdmin.from("documents").update({ processing_status: "processing", processing_error: null }).eq("id", doc.id);
+    await processDocument(doc.id);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown rescan error.";
+    await supabaseAdmin.from("documents").update({ processing_status: "failed", processing_error: message }).eq("id", doc.id);
+  } finally {
+    revalidatePath("/dashboard");
+    revalidatePath("/dashboard/documents");
+    revalidatePath(`/dashboard/documents/${doc.id}`);
+    revalidatePath("/dashboard/assistant");
+    revalidatePath("/dashboard/rules");
+  }
 }
 
 export async function deleteDocumentAction(formData: FormData) {

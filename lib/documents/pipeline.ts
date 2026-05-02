@@ -1,6 +1,12 @@
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { extractDocumentWithAI, type ExtractedDocument } from "@/lib/openai/document-extraction";
-import { regenerateAlertsForBusiness } from "@/lib/alerts/monitoring";
+import { extractDocumentWithAI, type StructuredExtraction } from "@/lib/openai/document-extraction";
+import {
+  regenerateAlertsForBusiness,
+  isValidCarrierLicence,
+  isValidHazardousWasteNote,
+  isValidInvoice,
+  isValidWasteTransferNote
+} from "@/lib/alerts/monitoring";
 import { calculateComplianceScore, type ComplianceStatus } from "@/lib/compliance/scoring";
 
 const BUCKET = "waste-documents";
@@ -12,6 +18,14 @@ export type BusinessProfile = {
   business_type: string | null;
   produces_food_waste: boolean | null;
   produces_hazardous_waste: boolean | null;
+};
+
+type ProcessingStatus = "uploaded" | "processing" | "processed" | "review" | "failed";
+type ValidationResult = {
+  status: ProcessingStatus;
+  missingFields: string[];
+  error: string | null;
+  normalizedRisk: "low" | "medium" | "high";
 };
 
 function safeFileName(name: string) {
@@ -76,56 +90,58 @@ async function readFileFromStorage(storagePath: string, fallbackName: string) {
 }
 
 export async function analyseDocumentWithOpenAI(text: string, businessProfile: BusinessProfile, file: File) {
-  const aiResult = await extractDocumentWithAI(
+  const aiResult = await extractDocumentWithAI({
     file,
-    {
+    extractedText: text,
+    businessProfile: {
       name: businessProfile.name,
       business_type: businessProfile.business_type
-    },
-    text
-  );
+    }
+  });
 
   // filename heuristics for common test fixtures if model returns unknown
   const lowerName = file.name.toLowerCase();
   if (aiResult.document_type === "unknown") {
     if (lowerName.includes("waste_transfer_note") || lowerName.includes("wtn")) {
       aiResult.document_type = "waste_transfer_note";
-      aiResult.ai_risk_level = "low";
+      aiResult.risk_level = "low";
     } else if (lowerName.includes("invoice")) {
       aiResult.document_type = "invoice";
-      aiResult.ai_risk_level = "low";
+      aiResult.risk_level = "low";
     } else if (lowerName.includes("licence") || lowerName.includes("license")) {
       aiResult.document_type = "carrier_licence";
-      if (aiResult.ai_risk_level === "low") {
-        aiResult.ai_risk_level = "medium";
+      if (aiResult.risk_level === "low") {
+        aiResult.risk_level = "medium";
       }
     }
   }
 
-  const normalized = {
-    ...aiResult,
-    ai_summary: text && aiResult.ai_summary.length < 32 ? `${aiResult.ai_summary} (limited text extracted)` : aiResult.ai_summary
-  };
-
-  return normalized;
+  return aiResult;
 }
 
-export async function updateDocumentWithAIResults(documentId: string, aiResult: ExtractedDocument) {
+export async function updateDocumentWithAIResults(documentId: string, aiResult: StructuredExtraction) {
+  const validation = validateExtractedDocument(aiResult);
+  const normalizedExtraction: StructuredExtraction = {
+    ...aiResult,
+    risk_level: validation.normalizedRisk,
+    missing_fields: Array.from(new Set([...(aiResult.missing_fields ?? []), ...validation.missingFields]))
+  };
+
   const { error } = await supabaseAdmin
     .from("documents")
     .update({
-      document_type: aiResult.document_type,
-      extracted_supplier: aiResult.extracted_supplier,
-      extracted_date: aiResult.extracted_date,
-      expiry_date: aiResult.expiry_date,
-      waste_type: aiResult.waste_type,
-      extracted_ewc_code: aiResult.extracted_ewc_code,
-      extracted_licence_number: aiResult.extracted_licence_number,
-      ai_summary: aiResult.ai_summary,
-      ai_risk_level: aiResult.ai_risk_level,
-      ai_extracted_json: aiResult,
-      processing_status: "processed",
-      processing_error: null
+      document_type: normalizedExtraction.document_type,
+      extracted_supplier: normalizedExtraction.supplier,
+      extracted_date: normalizedExtraction.document_date,
+      expiry_date: normalizedExtraction.expiry_date,
+      waste_type: normalizedExtraction.waste_type,
+      extracted_ewc_code: normalizedExtraction.ewc_code,
+      extracted_licence_number: normalizedExtraction.licence_number,
+      ai_summary: normalizedExtraction.summary,
+      ai_risk_level: normalizedExtraction.risk_level,
+      ai_extracted_json: normalizedExtraction,
+      processing_status: validation.status,
+      processing_error: validation.error
     })
     .eq("id", documentId);
 
@@ -134,19 +150,68 @@ export async function updateDocumentWithAIResults(documentId: string, aiResult: 
   }
 }
 
-export async function generateAlertsForDocument(documentId: string, _aiResult: ExtractedDocument) {
+export function validateExtractedDocument(aiResult: StructuredExtraction): ValidationResult {
+  if (aiResult.document_type === "unknown") {
+    return {
+      status: "review",
+      missingFields: ["document_type"],
+      error: "Document type detected as unknown. Manual review required.",
+      normalizedRisk: aiResult.risk_level === "low" ? "medium" : aiResult.risk_level
+    };
+  }
+
+  const missing: string[] = [];
+  const requireField = (value: string | null, label: string) => {
+    if (!value || value.trim().length === 0) missing.push(label);
+  };
+
+  if (aiResult.document_type === "waste_transfer_note") {
+    requireField(aiResult.supplier, "supplier");
+    requireField(aiResult.document_date, "document_date");
+    requireField(aiResult.waste_type, "waste_type");
+    if (!aiResult.ewc_code && !aiResult.licence_number) {
+      missing.push("ewc_code_or_licence_number");
+    }
+  } else if (aiResult.document_type === "carrier_licence") {
+    requireField(aiResult.supplier, "supplier");
+    requireField(aiResult.expiry_date, "expiry_date");
+    requireField(aiResult.licence_number, "licence_number");
+  } else if (aiResult.document_type === "invoice") {
+    requireField(aiResult.supplier, "supplier");
+    requireField(aiResult.document_date, "document_date");
+  } else if (aiResult.document_type === "recycling_report") {
+    if (!aiResult.supplier && !aiResult.document_date) {
+      missing.push("supplier_or_document_date");
+    }
+  } else if (aiResult.document_type === "contract") {
+    requireField(aiResult.supplier, "supplier");
+  } else if (aiResult.document_type === "hazardous_waste_note") {
+    requireField(aiResult.supplier, "supplier");
+    requireField(aiResult.document_date, "document_date");
+    requireField(aiResult.waste_type, "waste_type");
+    requireField(aiResult.ewc_code, "ewc_code");
+  }
+
+  if (missing.length > 0) {
+    return {
+      status: "review",
+      missingFields: missing,
+      error: `Important fields missing: ${missing.join(", ")}`,
+      normalizedRisk: aiResult.risk_level === "low" ? "medium" : aiResult.risk_level
+    };
+  }
+
+  return { status: "processed", missingFields: [], error: null, normalizedRisk: aiResult.risk_level };
+}
+
+export async function generateAlertsForDocument(documentId: string, _aiResult: StructuredExtraction) {
   const { data: doc, error: docError } = await supabaseAdmin
     .from("documents")
-    .select("id,business_id,user_id,document_type,expiry_date,ai_risk_level,file_name")
+    .select("id,business_id")
     .eq("id", documentId)
     .maybeSingle<{
       id: string;
       business_id: string;
-      user_id: string;
-      document_type: string | null;
-      expiry_date: string | null;
-      ai_risk_level: "low" | "medium" | "high" | null;
-      file_name: string;
     }>();
 
   if (docError || !doc) {
@@ -169,9 +234,10 @@ export async function recalculateComplianceScore(businessId: string) {
 
   const { data: documents } = await supabaseAdmin
     .from("documents")
-    .select("document_type,expiry_date,ai_risk_level,waste_type,ai_summary")
-    .eq("business_id", business.id)
-    .eq("processing_status", "processed");
+    .select(
+      "id,file_name,document_type,extracted_supplier,extracted_date,extracted_ewc_code,extracted_licence_number,ai_risk_level,expiry_date,waste_type,ai_summary,ai_extracted_json,created_at,processing_status"
+    )
+    .eq("business_id", business.id);
 
   const { data: alerts } = await supabaseAdmin
     .from("alerts")
@@ -179,18 +245,40 @@ export async function recalculateComplianceScore(businessId: string) {
     .eq("business_id", business.id)
     .eq("status", "open");
 
+  const validEvidenceDocuments = ((documents ?? []) as Array<{
+    id: string;
+    file_name: string;
+    document_type: string | null;
+    extracted_supplier: string | null;
+    extracted_date: string | null;
+    extracted_ewc_code: string | null;
+    extracted_licence_number: string | null;
+    ai_risk_level: "low" | "medium" | "high" | null;
+    expiry_date: string | null;
+    waste_type: string | null;
+    ai_summary: string | null;
+    ai_extracted_json: { missing_fields?: string[] } | null;
+    created_at: string;
+    processing_status: "uploaded" | "processing" | "processed" | "review" | "failed" | null;
+  }>).filter((d) => isValidWasteTransferNote(d) || isValidCarrierLicence(d) || isValidInvoice(d) || isValidHazardousWasteNote(d));
+
   const result = calculateComplianceScore({
     businessProfile: {
       id: business.id,
       produces_food_waste: business.produces_food_waste,
       produces_hazardous_waste: business.produces_hazardous_waste
     },
-    uploadedDocuments: (documents ?? []) as Array<{
+    uploadedDocuments: validEvidenceDocuments as Array<{
       document_type: string | null;
+      extracted_supplier: string | null;
+      extracted_date: string | null;
+      extracted_ewc_code: string | null;
+      extracted_licence_number: string | null;
       expiry_date: string | null;
       ai_risk_level: "low" | "medium" | "high" | null;
       waste_type: string | null;
       ai_summary: string | null;
+      processing_status: "uploaded" | "processing" | "processed" | "review" | "failed" | null;
     }>,
     openAlerts: (alerts ?? []) as Array<{ severity: "low" | "medium" | "high" | null; status: string | null }>
   });
@@ -245,6 +333,9 @@ export async function processDocument(documentId: string) {
     const text = await extractTextFromFile(doc.storage_path);
     console.log("Extracted text", text.slice(0, 500));
     const file = await readFileFromStorage(doc.storage_path, doc.file_name);
+    if (file.type === "application/pdf" && text.trim().length === 0) {
+      throw new Error("No text could be extracted from document.");
+    }
     const aiResult = await analyseDocumentWithOpenAI(text, business, file);
     console.log("AI result", aiResult);
     await updateDocumentWithAIResults(documentId, aiResult);

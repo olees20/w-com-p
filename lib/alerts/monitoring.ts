@@ -14,33 +14,27 @@ type DocumentRow = {
   file_name: string;
   document_type: string | null;
   extracted_supplier: string | null;
+  extracted_date: string | null;
+  extracted_ewc_code: string | null;
   extracted_licence_number: string | null;
   ai_risk_level: "low" | "medium" | "high" | null;
   expiry_date: string | null;
   waste_type: string | null;
   ai_summary: string | null;
+  ai_extracted_json: { missing_fields?: string[] } | null;
   created_at: string;
-  processing_status: "uploaded" | "processing" | "processed" | "failed" | null;
+  processing_status: "uploaded" | "processing" | "processed" | "review" | "failed" | null;
 };
 
 type AlertInput = {
   rule_id: string;
+  rule_key: string;
   title: string;
   description: string;
   severity: Severity;
   due_date?: string | null;
   document_id?: string | null;
 };
-
-const SYSTEM_ALERT_TITLES = [
-  "No documents uploaded",
-  "No waste transfer note uploaded",
-  "Carrier licence expires soon",
-  "Document has high AI risk level",
-  "Food waste business has no food waste documentation",
-  "Hazardous waste business has no hazardous waste documentation",
-  "Missing monthly waste record"
-] as const;
 
 function normalize(value: string | null | undefined) {
   return (value ?? "").toLowerCase();
@@ -67,52 +61,108 @@ function toDateOnly(value: string | null) {
   return date.toISOString().slice(0, 10);
 }
 
-function hasCurrentMonthWasteRecord(documents: DocumentRow[]) {
+function isBeforeToday(value: string | null) {
+  if (!value) return false;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return false;
   const now = new Date();
-  const month = now.getUTCMonth();
-  const year = now.getUTCFullYear();
-  return documents.some((doc) => {
-    const created = new Date(doc.created_at);
-    if (Number.isNaN(created.getTime())) return false;
-    const matchesMonth = created.getUTCMonth() === month && created.getUTCFullYear() === year;
-    const isWasteLike = doc.document_type === "waste_transfer_note" || normalize(doc.waste_type).length > 0;
-    return matchesMonth && isWasteLike;
-  });
+  return date.getTime() < now.getTime();
 }
 
-function buildAlertsForBusiness(business: BusinessRow, processedDocuments: DocumentRow[]): AlertInput[] {
-  const alerts: AlertInput[] = [];
+function hasText(value: string | null | undefined) {
+  return Boolean(value && value.trim().length > 0);
+}
 
-  if (processedDocuments.length === 0) {
-    alerts.push({
-      rule_id: "documents_uploaded",
-      title: "No documents uploaded",
-      description: "Upload compliance evidence to maintain visibility and reduce risk.",
-      severity: "high"
-    });
-  }
-
-  const hasWasteTransferNote = processedDocuments.some(
-    (doc) => doc.document_type === "waste_transfer_note" && doc.processing_status === "processed"
+export function isValidWasteTransferNote(document: DocumentRow) {
+  return (
+    document.processing_status === "processed" &&
+    document.document_type === "waste_transfer_note" &&
+    document.ai_risk_level !== "high" &&
+    hasText(document.extracted_supplier) &&
+    hasText(document.extracted_date) &&
+    hasText(document.waste_type) &&
+    (hasText(document.extracted_ewc_code) || hasText(document.extracted_licence_number))
   );
-  if (!hasWasteTransferNote) {
+}
+
+export function isValidCarrierLicence(document: DocumentRow) {
+  return (
+    document.processing_status === "processed" &&
+    document.document_type === "carrier_licence" &&
+    document.ai_risk_level !== "high" &&
+    hasText(document.extracted_supplier) &&
+    hasText(document.expiry_date) &&
+    hasText(document.extracted_licence_number)
+  );
+}
+
+export function isValidInvoice(document: DocumentRow) {
+  return (
+    document.processing_status === "processed" &&
+    document.document_type === "invoice" &&
+    document.ai_risk_level !== "high" &&
+    hasText(document.extracted_supplier) &&
+    hasText(document.extracted_date)
+  );
+}
+
+export function isValidHazardousWasteNote(document: DocumentRow) {
+  return (
+    document.processing_status === "processed" &&
+    document.document_type === "hazardous_waste_note" &&
+    document.ai_risk_level !== "high" &&
+    hasText(document.extracted_supplier) &&
+    hasText(document.extracted_date) &&
+    hasText(document.waste_type) &&
+    hasText(document.extracted_ewc_code)
+  );
+}
+
+function buildAlertsForBusiness(business: BusinessRow, documents: DocumentRow[]): AlertInput[] {
+  const alerts: AlertInput[] = [];
+  const validWTNs = documents.filter(isValidWasteTransferNote);
+  const validCarrierLicences = documents.filter(isValidCarrierLicence);
+
+  if (validWTNs.length === 0) {
     alerts.push({
       rule_id: "wtn_required",
-      title: "No waste transfer note uploaded",
-      description: "Add a valid waste transfer note to meet baseline compliance evidence.",
+      rule_key: "no_valid_waste_transfer_note",
+      title: "No valid waste transfer note",
+      description: "Upload a processed waste transfer note with required fields.",
       severity: "high"
     });
   }
 
-  for (const doc of processedDocuments) {
-    if (doc.document_type === "carrier_licence" && isWithinDays(doc.expiry_date, 30)) {
-      const dateLabel = toDateOnly(doc.expiry_date) ?? "unknown date";
-      const supplier = doc.extracted_supplier ?? "Carrier";
-      const licence = doc.extracted_licence_number ?? "unknown licence";
+  if (validCarrierLicences.length === 0) {
+    alerts.push({
+      rule_id: "licensed_carrier",
+      rule_key: "carrier_licence_missing",
+      title: "Carrier licence missing",
+      description: "Upload a valid processed carrier licence with supplier, licence number, and expiry date.",
+      severity: "high"
+    });
+  }
+
+  for (const doc of validCarrierLicences) {
+    const supplier = doc.extracted_supplier ?? "Carrier";
+    const licence = doc.extracted_licence_number ?? "unknown licence";
+    const expiry = toDateOnly(doc.expiry_date) ?? "unknown date";
+    if (isBeforeToday(doc.expiry_date)) {
       alerts.push({
         rule_id: "licensed_carrier",
+        rule_key: "carrier_licence_expired",
+        title: "Carrier licence expired",
+        description: `${supplier} licence ${licence} expired on ${expiry}.`,
+        severity: "high",
+        due_date: toDateOnly(doc.expiry_date),
+        document_id: doc.id
+      });
+    } else if (isWithinDays(doc.expiry_date, 30)) {
+      alerts.push({
+        rule_id: "licensed_carrier",
+        rule_key: "carrier_licence_expiring",
         title: "Carrier licence expires soon",
-        description: `${supplier} licence ${licence} expires on ${dateLabel}.`,
+        description: `${supplier} licence ${licence} expires on ${expiry}.`,
         severity: "high",
         due_date: toDateOnly(doc.expiry_date),
         document_id: doc.id
@@ -120,53 +170,30 @@ function buildAlertsForBusiness(business: BusinessRow, processedDocuments: Docum
     }
   }
 
-  for (const doc of processedDocuments) {
-    if (doc.ai_risk_level === "high") {
-      alerts.push({
-        rule_id: "high_risk_document",
-        title: "Document has high AI risk level",
-        description: `${doc.file_name} is flagged high risk by AI extraction.`,
-        severity: "high",
-        document_id: doc.id
-      });
-    }
+  for (const doc of documents.filter((d) => d.processing_status === "review")) {
+    const missing = doc.ai_extracted_json?.missing_fields?.length ? doc.ai_extracted_json.missing_fields.join(", ") : "required fields";
+    alerts.push({
+      rule_id: "document_field_completeness",
+      rule_key: "document_requires_review",
+      title: "Document requires review",
+      description: `${doc.file_name} is missing required fields: ${missing}`,
+      severity: "medium",
+      document_id: doc.id
+    });
   }
 
   if (business.produces_food_waste) {
-    const hasFoodEvidence = hasKeyword(processedDocuments, "waste_type", "food") || hasKeyword(processedDocuments, "ai_summary", "food");
+    const processedDocs = documents.filter((d) => d.processing_status === "processed");
+    const hasFoodEvidence = hasKeyword(processedDocs, "waste_type", "food") || hasKeyword(processedDocs, "ai_summary", "food");
     if (!hasFoodEvidence) {
       alerts.push({
         rule_id: "food_waste_separation",
-        title: "Food waste business has no food waste documentation",
+        rule_key: "food_waste_missing",
+        title: "Food waste documentation missing",
         description: "Upload records that show food waste handling and disposal evidence.",
         severity: "medium"
       });
     }
-  }
-
-  if (business.produces_hazardous_waste) {
-    const hasHazardousEvidence =
-      hasKeyword(processedDocuments, "waste_type", "hazard") || hasKeyword(processedDocuments, "ai_summary", "hazard");
-    if (!hasHazardousEvidence) {
-      alerts.push({
-        rule_id: "hazardous_waste_documentation",
-        title: "Hazardous waste business has no hazardous waste documentation",
-        description: "Upload hazardous waste documentation to reduce compliance exposure.",
-        severity: "high"
-      });
-    }
-  }
-
-  if (!hasCurrentMonthWasteRecord(processedDocuments)) {
-    const now = new Date();
-    const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).toISOString().slice(0, 10);
-    alerts.push({
-      rule_id: "monthly_waste_record",
-      title: "Missing monthly waste record",
-      description: "No waste record detected for the current month.",
-      severity: "medium",
-      due_date: monthEnd
-    });
   }
 
   return alerts;
@@ -183,12 +210,13 @@ export async function regenerateAlertsForBusiness(businessId: string) {
 
   const { data: documents } = await supabaseAdmin
     .from("documents")
-    .select("id,file_name,document_type,extracted_supplier,extracted_licence_number,ai_risk_level,expiry_date,waste_type,ai_summary,created_at,processing_status")
-    .eq("business_id", business.id)
-    .eq("processing_status", "processed");
+    .select(
+      "id,file_name,document_type,extracted_supplier,extracted_date,extracted_ewc_code,extracted_licence_number,ai_risk_level,expiry_date,waste_type,ai_summary,ai_extracted_json,created_at,processing_status"
+    )
+    .eq("business_id", business.id);
 
-  const processedDocuments = (documents ?? []) as DocumentRow[];
-  const generated = buildAlertsForBusiness(business, processedDocuments);
+  const allDocuments = (documents ?? []) as DocumentRow[];
+  const generated = buildAlertsForBusiness(business, allDocuments);
 
   // Close prior system-generated open alerts so state always reflects current processed docs.
   await supabaseAdmin
@@ -196,21 +224,34 @@ export async function regenerateAlertsForBusiness(businessId: string) {
     .update({ status: "resolved", resolved_at: new Date().toISOString() })
     .eq("business_id", business.id)
     .eq("status", "open")
-    .in("title", [...SYSTEM_ALERT_TITLES]);
+    .eq("source", "system");
 
   const dedupe = new Set<string>();
-  const toInsert = generated
-    .filter((a) => {
-      const key = `${a.title}|${a.document_id ?? "none"}|${a.due_date ?? "none"}`;
-      if (dedupe.has(key)) return false;
-      dedupe.add(key);
-      return true;
-    })
+  const deduped = generated.filter((a) => {
+    const key = `${a.rule_key}|${a.document_id ?? "none"}`;
+    if (dedupe.has(key)) return false;
+    dedupe.add(key);
+    return true;
+  });
+
+  const { data: existingOpenSystem } = await supabaseAdmin
+    .from("alerts")
+    .select("rule_key,document_id")
+    .eq("business_id", business.id)
+    .eq("status", "open")
+    .eq("source", "system");
+
+  const openKeySet = new Set((existingOpenSystem ?? []).map((a) => `${a.rule_key ?? "none"}|${a.document_id ?? "none"}`));
+
+  const toInsert = deduped
+    .filter((alert) => !openKeySet.has(`${alert.rule_key}|${alert.document_id ?? "none"}`))
     .map((alert) => ({
       business_id: business.id,
       user_id: business.user_id,
       document_id: alert.document_id ?? null,
       rule_id: alert.rule_id,
+      rule_key: alert.rule_key,
+      source: "system",
       title: alert.title,
       description: alert.description,
       severity: alert.severity,

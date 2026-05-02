@@ -7,7 +7,7 @@ type DocumentDetail = {
   id: string;
   file_name: string;
   created_at: string;
-  processing_status: "uploaded" | "processing" | "processed" | "failed" | null;
+  processing_status: "uploaded" | "processing" | "processed" | "review" | "failed" | null;
   processing_error: string | null;
   document_type: string | null;
   extracted_supplier: string | null;
@@ -18,7 +18,7 @@ type DocumentDetail = {
   extracted_licence_number: string | null;
   ai_summary: string | null;
   ai_risk_level: "low" | "medium" | "high" | null;
-  ai_extracted_json: unknown;
+  ai_extracted_json: { missing_fields?: string[] } | null;
 };
 
 function fmt(value: string | null) {
@@ -29,8 +29,10 @@ function fmt(value: string | null) {
 }
 
 function badgeColor(level: string) {
-  if (level === "high" || level === "failed") return "bg-red-50 text-[#DC2626] border-red-200";
-  if (level === "medium" || level === "processing" || level === "uploaded") return "bg-amber-50 text-[#F59E0B] border-amber-200";
+  if (level === "failed" || level === "high") return "bg-red-50 text-[#DC2626] border-red-200";
+  if (level === "review" || level === "medium") return "bg-amber-50 text-[#F59E0B] border-amber-200";
+  if (level === "processing") return "bg-blue-50 text-[#2563EB] border-blue-200";
+  if (level === "uploaded" || level === "unknown") return "bg-slate-100 text-slate-700 border-slate-200";
   return "bg-green-50 text-[#16A34A] border-green-200";
 }
 
@@ -45,6 +47,13 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
       <div className="text-sm text-[#374151]">{value}</div>
     </div>
   );
+}
+
+function extractedOrFallback(value: string | null) {
+  if (!value || value.trim().length === 0) {
+    return <span className="text-amber-700">Not extracted</span>;
+  }
+  return value;
 }
 
 export default async function DocumentDetailPage({ params }: { params: { id: string } }) {
@@ -86,7 +95,7 @@ export default async function DocumentDetailPage({ params }: { params: { id: str
             <form action={rescanDocumentAction}>
               <input type="hidden" name="document_id" value={doc.id} />
               <Button type="submit" variant="secondary">
-                Rescan
+                Rescan document
               </Button>
             </form>
             <form action={deleteDocumentAction}>
@@ -100,17 +109,51 @@ export default async function DocumentDetailPage({ params }: { params: { id: str
       </section>
 
       <section className="app-panel space-y-4 p-5">
+        {doc.processing_status === "review" ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            This document was recognised but needs review because required fields are missing.
+          </div>
+        ) : null}
+        {doc.processing_status === "failed" ? (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+            <p className="font-semibold">Processing failed.</p>
+            {doc.processing_error ? <p className="mt-1">{doc.processing_error}</p> : null}
+          </div>
+        ) : null}
+
         <Row label="Processing status" value={<Badge value={doc.processing_status ?? "uploaded"} />} />
         {doc.processing_status === "failed" && doc.processing_error ? <Row label="Processing error" value={doc.processing_error} /> : null}
-        <Row label="Document type" value={doc.document_type ?? "unknown"} />
-        <Row label="Supplier / carrier" value={doc.extracted_supplier ?? "—"} />
-        <Row label="Document date" value={fmt(doc.extracted_date)} />
-        <Row label="Expiry date" value={fmt(doc.expiry_date)} />
-        <Row label="Waste type" value={doc.waste_type ?? "—"} />
-        <Row label="EWC code" value={doc.extracted_ewc_code ?? "—"} />
-        <Row label="Licence number" value={doc.extracted_licence_number ?? "—"} />
-        <Row label="AI risk level" value={<Badge value={doc.ai_risk_level ?? "unknown"} />} />
-        <Row label="AI summary" value={doc.ai_summary ?? "—"} />
+
+        <div className="rounded-lg border border-[#E5E7EB] p-4">
+          <h2 className="text-base font-bold text-[#111827]">Extraction result</h2>
+          <div className="mt-3 space-y-3">
+            <Row label="Document type" value={doc.document_type ?? <span className="text-amber-700">Not extracted</span>} />
+            <Row label="Supplier / carrier" value={extractedOrFallback(doc.extracted_supplier)} />
+            <Row label="Document date" value={doc.extracted_date ? fmt(doc.extracted_date) : <span className="text-amber-700">Not extracted</span>} />
+            <Row label="Expiry date" value={doc.expiry_date ? fmt(doc.expiry_date) : <span className="text-amber-700">Not extracted</span>} />
+            <Row label="Waste type" value={extractedOrFallback(doc.waste_type)} />
+            <Row label="EWC code" value={extractedOrFallback(doc.extracted_ewc_code)} />
+            <Row label="Licence number" value={extractedOrFallback(doc.extracted_licence_number)} />
+            <Row label="Risk level" value={<Badge value={doc.ai_risk_level ?? "unknown"} />} />
+            <Row label="Summary" value={doc.ai_summary ? doc.ai_summary : <span className="text-amber-700">Not extracted</span>} />
+            <Row
+              label="Missing fields"
+              value={
+                doc.ai_extracted_json?.missing_fields?.length ? (
+                  <div className="flex flex-wrap gap-2">
+                    {doc.ai_extracted_json.missing_fields.map((field) => (
+                      <span key={field} className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                        {field}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="text-[#6B7280]">None</span>
+                )
+              }
+            />
+          </div>
+        </div>
 
         <details className="rounded-lg border border-[#E5E7EB] p-3">
           <summary className="cursor-pointer text-sm font-semibold text-[#111827]">Raw extracted JSON</summary>

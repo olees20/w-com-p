@@ -1,17 +1,24 @@
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_MODEL = process.env.OPENAI_MODEL_DOC_EXTRACTION || "gpt-4.1-mini";
 
-export type ExtractedDocument = {
-  document_type: "waste_transfer_note" | "carrier_licence" | "invoice" | "recycling_report" | "contract" | "unknown";
-  extracted_supplier: string | null;
-  extracted_date: string | null;
+export type StructuredExtraction = {
+  document_type:
+    | "waste_transfer_note"
+    | "carrier_licence"
+    | "invoice"
+    | "recycling_report"
+    | "contract"
+    | "hazardous_waste_note"
+    | "unknown";
+  supplier: string | null;
+  document_date: string | null;
   expiry_date: string | null;
   waste_type: string | null;
-  extracted_ewc_code: string | null;
-  extracted_licence_number: string | null;
-  ai_risk_level: "low" | "medium" | "high";
-  ai_summary: string;
-  missing_information: string[];
+  ewc_code: string | null;
+  licence_number: string | null;
+  risk_level: "low" | "medium" | "high";
+  summary: string;
+  missing_fields: string[];
 };
 
 const extractionSchema = {
@@ -20,67 +27,88 @@ const extractionSchema = {
   properties: {
     document_type: {
       type: "string",
-      enum: ["waste_transfer_note", "carrier_licence", "invoice", "recycling_report", "contract", "unknown"]
+      enum: ["waste_transfer_note", "carrier_licence", "invoice", "recycling_report", "contract", "hazardous_waste_note", "unknown"]
     },
-    extracted_supplier: {
-      type: ["string", "null"]
-    },
-    extracted_date: {
-      type: ["string", "null"],
-      description: "Date in YYYY-MM-DD when confidently present, otherwise null"
-    },
-    expiry_date: {
-      type: ["string", "null"],
-      description: "Date in YYYY-MM-DD when confidently present, otherwise null"
-    },
-    waste_type: {
-      type: ["string", "null"]
-    },
-    extracted_ewc_code: {
-      type: ["string", "null"]
-    },
-    extracted_licence_number: {
-      type: ["string", "null"]
-    },
-    ai_risk_level: {
-      type: "string",
-      enum: ["low", "medium", "high"]
-    },
-    ai_summary: {
-      type: "string"
-    },
-    missing_information: {
-      type: "array",
-      items: { type: "string" }
-    }
+    supplier: { type: ["string", "null"] },
+    document_date: { type: ["string", "null"], description: "Date in YYYY-MM-DD when confidently present, otherwise null" },
+    expiry_date: { type: ["string", "null"], description: "Date in YYYY-MM-DD when confidently present, otherwise null" },
+    waste_type: { type: ["string", "null"] },
+    ewc_code: { type: ["string", "null"] },
+    licence_number: { type: ["string", "null"] },
+    risk_level: { type: "string", enum: ["low", "medium", "high"] },
+    summary: { type: "string" },
+    missing_fields: { type: "array", items: { type: "string" } }
   },
   required: [
     "document_type",
-    "extracted_supplier",
-    "extracted_date",
+    "supplier",
+    "document_date",
     "expiry_date",
     "waste_type",
-    "extracted_ewc_code",
-    "extracted_licence_number",
-    "ai_risk_level",
-    "ai_summary",
-    "missing_information"
+    "ewc_code",
+    "licence_number",
+    "risk_level",
+    "summary",
+    "missing_fields"
   ]
 } as const;
 
-function fallbackExtraction(reason: string): ExtractedDocument {
-  return {
-    document_type: "unknown",
-    extracted_supplier: null,
-    extracted_date: null,
-    expiry_date: null,
-    waste_type: null,
-    extracted_ewc_code: null,
-    extracted_licence_number: null,
-    ai_risk_level: "medium",
-    ai_summary: `AI extraction unavailable: ${reason}`,
-    missing_information: ["supplier_name", "document_date", "expiry_date", "waste_type"]
-  };
+function assertDateOrNull(value: unknown, field: string) {
+  if (value === null) return;
+  if (typeof value !== "string") throw new Error(`Invalid type for ${field}.`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error(`Invalid date format for ${field}; expected YYYY-MM-DD or null.`);
+}
+
+function validateStructuredExtraction(data: unknown): StructuredExtraction {
+  if (!data || typeof data !== "object") {
+    throw new Error("Extraction is not an object.");
+  }
+  const value = data as Record<string, unknown>;
+  const required = [
+    "document_type",
+    "supplier",
+    "document_date",
+    "expiry_date",
+    "waste_type",
+    "ewc_code",
+    "licence_number",
+    "risk_level",
+    "summary",
+    "missing_fields"
+  ] as const;
+  for (const key of required) {
+    if (!(key in value)) {
+      throw new Error(`Missing required field: ${key}`);
+    }
+  }
+
+  const allowedDocTypes = new Set([
+    "waste_transfer_note",
+    "carrier_licence",
+    "invoice",
+    "recycling_report",
+    "contract",
+    "hazardous_waste_note",
+    "unknown"
+  ]);
+  const allowedRisk = new Set(["low", "medium", "high"]);
+
+  if (typeof value.document_type !== "string" || !allowedDocTypes.has(value.document_type)) {
+    throw new Error("Invalid document_type.");
+  }
+  if (value.supplier !== null && typeof value.supplier !== "string") throw new Error("Invalid supplier.");
+  assertDateOrNull(value.document_date, "document_date");
+  assertDateOrNull(value.expiry_date, "expiry_date");
+  if (value.waste_type !== null && typeof value.waste_type !== "string") throw new Error("Invalid waste_type.");
+  if (value.ewc_code !== null && typeof value.ewc_code !== "string") throw new Error("Invalid ewc_code.");
+  if (value.licence_number !== null && typeof value.licence_number !== "string") throw new Error("Invalid licence_number.");
+  if (typeof value.risk_level !== "string" || !allowedRisk.has(value.risk_level)) throw new Error("Invalid risk_level.");
+  if (typeof value.summary !== "string" || value.summary.trim().length === 0) throw new Error("Invalid summary.");
+  if (!Array.isArray(value.missing_fields) || value.missing_fields.some((m) => typeof m !== "string")) {
+    throw new Error("Invalid missing_fields.");
+  }
+
+  return value as StructuredExtraction;
 }
 
 async function uploadFileToOpenAI(file: File) {
@@ -90,9 +118,7 @@ async function uploadFileToOpenAI(file: File) {
 
   const response = await fetch("https://api.openai.com/v1/files", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${OPENAI_API_KEY}`
-    },
+    headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
     body: formData
   });
 
@@ -104,9 +130,9 @@ async function uploadFileToOpenAI(file: File) {
   return (await response.json()) as { id: string };
 }
 
-async function runExtraction(fileId: string, context?: { text?: string; fileName?: string }) {
-  const extractedTextSnippet = (context?.text ?? "").slice(0, 12000);
-  const fileName = context?.fileName ?? "unknown-file";
+async function runExtraction(params: { fileId: string; text: string; fileName: string }) {
+  const extractedTextSnippet = params.text.slice(0, 12000);
+
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
@@ -122,7 +148,7 @@ async function runExtraction(fileId: string, context?: { text?: string; fileName
             {
               type: "input_text",
               text:
-                "You extract structured waste-compliance document data. Only use evidence from the document. If uncertain, return null or unknown."
+                "Return strict JSON matching the schema exactly. Only use document evidence. Use null for unknown values. Never return prose outside JSON."
             }
           ]
         },
@@ -131,15 +157,14 @@ async function runExtraction(fileId: string, context?: { text?: string; fileName
           content: [
             {
               type: "input_text",
-              text:
-                `Classify and extract: supplier name, document date, expiry date, waste type, EWC code, licence number, risk level (low/medium/high), short summary, and missing information.
-File name: ${fileName}
+              text: `Extract structured fields from this UK waste compliance document.
+File name: ${params.fileName}
 Extracted text snippet:
-${extractedTextSnippet || "[no text extracted]"}`
+${extractedTextSnippet}`
             },
             {
               type: "input_file",
-              file_id: fileId
+              file_id: params.fileId
             }
           ]
         }
@@ -163,30 +188,26 @@ ${extractedTextSnippet || "[no text extracted]"}`
   return (await response.json()) as { output_text?: string };
 }
 
-export async function extractDocumentWithAI(
-  file: File,
-  businessProfile?: { name?: string | null; business_type?: string | null },
-  extractedText?: string
-): Promise<ExtractedDocument> {
+export async function extractDocumentWithAI(params: {
+  file: File;
+  extractedText: string;
+  businessProfile?: { name?: string | null; business_type?: string | null };
+}) {
   if (!OPENAI_API_KEY) {
-    return fallbackExtraction("OPENAI_API_KEY is not set.");
+    throw new Error("OPENAI_API_KEY is not set.");
   }
 
-  try {
-    const uploaded = await uploadFileToOpenAI(file);
-    const extracted = await runExtraction(uploaded.id, { text: extractedText, fileName: file.name });
+  const uploaded = await uploadFileToOpenAI(params.file);
+  const response = await runExtraction({
+    fileId: uploaded.id,
+    text: params.extractedText,
+    fileName: params.file.name
+  });
 
-    if (!extracted.output_text) {
-      return fallbackExtraction("No structured output returned.");
-    }
-
-    const parsed = JSON.parse(extracted.output_text) as ExtractedDocument;
-    if (businessProfile?.name && parsed.extracted_supplier === businessProfile.name) {
-      parsed.extracted_supplier = null;
-    }
-    return parsed;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    return fallbackExtraction(message);
+  if (!response.output_text) {
+    throw new Error("No structured output returned.");
   }
+
+  const parsed = validateStructuredExtraction(JSON.parse(response.output_text));
+  return parsed;
 }

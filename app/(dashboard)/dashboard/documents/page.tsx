@@ -11,7 +11,7 @@ type Doc = {
   expiry_date: string | null;
   waste_type: string | null;
   ai_risk_level: "low" | "medium" | "high" | null;
-  processing_status: "uploaded" | "processing" | "processed" | "failed" | null;
+  processing_status: "uploaded" | "processing" | "processed" | "review" | "failed" | null;
   processing_error: string | null;
   created_at: string;
 };
@@ -24,8 +24,10 @@ function formatDate(value: string | null) {
 }
 
 function badgeColor(level: string) {
-  if (level === "high" || level === "failed") return "bg-red-50 text-[#DC2626] border-red-200";
-  if (level === "medium" || level === "processing" || level === "uploaded") return "bg-amber-50 text-[#F59E0B] border-amber-200";
+  if (level === "failed" || level === "high") return "bg-red-50 text-[#DC2626] border-red-200";
+  if (level === "review" || level === "medium") return "bg-amber-50 text-[#F59E0B] border-amber-200";
+  if (level === "processing") return "bg-blue-50 text-[#2563EB] border-blue-200";
+  if (level === "uploaded" || level === "unknown") return "bg-slate-100 text-slate-700 border-slate-200";
   return "bg-green-50 text-[#16A34A] border-green-200";
 }
 

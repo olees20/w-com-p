@@ -14,11 +14,15 @@ type DocumentRow = {
   file_name: string;
   created_at: string;
   document_type: string | null;
+  extracted_supplier: string | null;
+  extracted_date: string | null;
+  extracted_ewc_code: string | null;
+  extracted_licence_number: string | null;
   expiry_date: string | null;
   ai_risk_level: "low" | "medium" | "high" | null;
   waste_type: string | null;
   ai_summary: string | null;
-  processing_status: "uploaded" | "processing" | "processed" | "failed" | null;
+  processing_status: "uploaded" | "processing" | "processed" | "review" | "failed" | null;
   processing_error: string | null;
 };
 
@@ -73,6 +77,14 @@ function scoreToColor(score: number) {
 
 function Badge({ level, label }: { level: RiskLevel; label: string }) {
   return <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-bold ${riskStyles[level]}`}>{label}</span>;
+}
+
+function statusBadgeClasses(status: DocumentRow["processing_status"]) {
+  if (status === "processed") return "bg-green-50 text-[#16A34A] border-green-200";
+  if (status === "review") return "bg-amber-50 text-[#F59E0B] border-amber-200";
+  if (status === "failed") return "bg-red-50 text-[#DC2626] border-red-200";
+  if (status === "processing") return "bg-blue-50 text-[#2563EB] border-blue-200";
+  return "bg-slate-100 text-slate-700 border-slate-200";
 }
 
 function ScoreWheel({ value, size = 96 }: { value: number; size?: number }) {
@@ -157,7 +169,9 @@ export default async function DashboardPage() {
 
   const { data: documents } = await supabase
     .from("documents")
-    .select("id,file_name,created_at,document_type,expiry_date,ai_risk_level,waste_type,ai_summary,processing_status,processing_error")
+    .select(
+      "id,file_name,created_at,document_type,extracted_supplier,extracted_date,extracted_ewc_code,extracted_licence_number,expiry_date,ai_risk_level,waste_type,ai_summary,processing_status,processing_error"
+    )
     .eq("business_id", business.id)
     .order("created_at", { ascending: false });
 
@@ -290,21 +304,7 @@ export default async function DashboardPage() {
             {recentDocuments.length ? (
               recentDocuments.map((doc) => {
                 const status = doc.processing_status ?? "uploaded";
-                const risk = doc.ai_risk_level === "high" ? "high" : doc.ai_risk_level === "medium" ? "medium" : "low";
-                const statusLevel: RiskLevel =
-                  status === "failed" ? "high" : status === "processing" || status === "uploaded" ? "medium" : risk;
-                const statusLabel =
-                  status === "failed"
-                    ? "failed"
-                    : status === "processing"
-                      ? "processing"
-                      : status === "uploaded"
-                        ? "uploaded"
-                        : risk === "low"
-                          ? "processed"
-                          : risk === "medium"
-                            ? "review"
-                            : "urgent";
+                const statusLabel = status;
                 return (
                   <article key={doc.id} className="flex items-center justify-between gap-3 rounded-xl border border-[#E5E7EB] p-3">
                     <div>
@@ -316,7 +316,9 @@ export default async function DashboardPage() {
                         <p className="mt-1 text-xs text-[#DC2626]">Error: {doc.processing_error}</p>
                       ) : null}
                     </div>
-                    <Badge level={statusLevel} label={statusLabel} />
+                    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-bold ${statusBadgeClasses(status)}`}>
+                      {statusLabel}
+                    </span>
                   </article>
                 );
               })

@@ -6,7 +6,7 @@ type Doc = {
   id: string;
   document_type: string | null;
   expiry_date: string | null;
-  processing_status: "uploaded" | "processing" | "processed" | "failed" | null;
+  processing_status: "uploaded" | "processing" | "processed" | "review" | "failed" | null;
 };
 
 function statusClasses(status: RuleStatus) {
