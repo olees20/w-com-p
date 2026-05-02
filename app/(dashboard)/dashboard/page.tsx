@@ -6,6 +6,7 @@ import { runAlertMonitoringForBusiness } from "@/lib/alerts/monitoring";
 import { markAlertResolved } from "@/app/(dashboard)/dashboard/actions";
 import { requireActiveSubscription } from "@/lib/stripe/guards";
 import { DashboardAssistant } from "@/components/assistant/dashboard-assistant";
+import { SubmitButton } from "@/components/ui/submit-button";
 
 type RiskLevel = "low" | "medium" | "high";
 
@@ -286,9 +287,9 @@ export default async function DashboardPage() {
                     </div>
                     <form action={markAlertResolved}>
                       <input type="hidden" name="alert_id" value={alert.id} />
-                      <Button type="submit" variant="secondary" className="w-full">
+                      <SubmitButton variant="secondary" loadingText="Resolving..." className="w-full">
                         Mark resolved
-                      </Button>
+                      </SubmitButton>
                     </form>
                   </div>
                 </article>

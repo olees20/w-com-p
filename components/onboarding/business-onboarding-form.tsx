@@ -2,7 +2,7 @@
 
 import { useFormState, useFormStatus } from "react-dom";
 import { saveBusinessOnboarding, type OnboardingState } from "@/app/onboarding/actions";
-import { Button } from "@/components/ui/button";
+import { LoadingButton } from "@/components/ui/loading-button";
 import { Input } from "@/components/ui/input";
 
 const initialState: OnboardingState = {};
@@ -11,9 +11,9 @@ function SubmitButton() {
   const { pending } = useFormStatus();
 
   return (
-    <Button type="submit" disabled={pending} className="w-full">
-      {pending ? "Saving profile..." : "Continue to dashboard"}
-    </Button>
+    <LoadingButton type="submit" isLoading={pending} loadingText="Saving..." className="w-full">
+      Continue to dashboard
+    </LoadingButton>
   );
 }
 

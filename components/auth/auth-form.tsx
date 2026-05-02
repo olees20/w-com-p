@@ -1,7 +1,7 @@
 "use client";
 
 import { useFormState, useFormStatus } from "react-dom";
-import { Button } from "@/components/ui/button";
+import { LoadingButton } from "@/components/ui/loading-button";
 import { Input } from "@/components/ui/input";
 import type { AuthActionState } from "@/app/(auth)/actions";
 
@@ -16,9 +16,14 @@ function SubmitButton({ mode }: { mode: "login" | "signup" }) {
   const { pending } = useFormStatus();
 
   return (
-    <Button type="submit" disabled={pending} className="w-full">
-      {pending ? "Please wait..." : mode === "login" ? "Log in" : "Create account"}
-    </Button>
+    <LoadingButton
+      type="submit"
+      isLoading={pending}
+      loadingText={mode === "login" ? "Logging in..." : "Creating account..."}
+      className="w-full"
+    >
+      {mode === "login" ? "Log in" : "Create account"}
+    </LoadingButton>
   );
 }
 

@@ -1,7 +1,10 @@
 import { notFound } from "next/navigation";
 import { createServerClient } from "@/lib/supabase/server";
-import { Button } from "@/components/ui/button";
-import { deleteDocumentAction, rescanDocumentAction } from "../actions";
+import { deleteDocumentAction } from "../actions";
+import { SubmitButton } from "@/components/ui/submit-button";
+import { RescanButton } from "@/components/documents/rescan-button";
+import { DocumentProcessingProgress } from "@/components/documents/document-processing-progress";
+import { DownloadButton } from "@/components/documents/download-button";
 
 type DocumentDetail = {
   id: string;
@@ -89,20 +92,13 @@ export default async function DocumentDetailPage({ params }: { params: { id: str
             <p className="mt-1 text-sm text-[#6B7280]">Uploaded {fmt(doc.created_at)}</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" href={`/api/documents/${doc.id}/download`}>
-              Download
-            </Button>
-            <form action={rescanDocumentAction}>
-              <input type="hidden" name="document_id" value={doc.id} />
-              <Button type="submit" variant="secondary">
-                Rescan document
-              </Button>
-            </form>
+            <DownloadButton documentId={doc.id} />
+            <RescanButton documentId={doc.id} />
             <form action={deleteDocumentAction}>
               <input type="hidden" name="document_id" value={doc.id} />
-              <Button type="submit" variant="secondary">
+              <SubmitButton variant="secondary" loadingText="Deleting...">
                 Delete
-              </Button>
+              </SubmitButton>
             </form>
           </div>
         </div>
@@ -122,6 +118,7 @@ export default async function DocumentDetailPage({ params }: { params: { id: str
         ) : null}
 
         <Row label="Processing status" value={<Badge value={doc.processing_status ?? "uploaded"} />} />
+        <DocumentProcessingProgress status={doc.processing_status} />
         {doc.processing_status === "failed" && doc.processing_error ? <Row label="Processing error" value={doc.processing_error} /> : null}
 
         <div className="rounded-lg border border-[#E5E7EB] p-4">

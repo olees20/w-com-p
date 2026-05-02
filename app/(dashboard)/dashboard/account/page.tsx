@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createServerClient } from "@/lib/supabase/server";
 import { changePassword, deleteAccount, updateAccountDetails } from "@/app/(dashboard)/dashboard/account/actions";
+import { SubmitButton } from "@/components/ui/submit-button";
 
 export default async function AccountPage({
   searchParams
@@ -78,9 +79,9 @@ export default async function AccountPage({
             </div>
           </div>
 
-          <button type="submit" className="rounded-lg bg-[#1E3A8A] px-4 py-2 text-sm font-bold text-white hover:bg-[#1a3279]">
+          <SubmitButton loadingText="Saving..." className="rounded-lg">
             Save details
-          </button>
+          </SubmitButton>
         </form>
 
         <div className="space-y-4">
@@ -96,17 +97,17 @@ export default async function AccountPage({
                 className="w-full rounded-lg border border-[#E5E7EB] bg-white px-3 py-2 text-sm"
               />
             </div>
-            <button type="submit" className="rounded-lg border border-[#E5E7EB] bg-white px-4 py-2 text-sm font-bold text-[#111827] hover:bg-[#F9FAFB]">
+            <SubmitButton variant="secondary" loadingText="Saving..." className="rounded-lg">
               Update password
-            </button>
+            </SubmitButton>
           </form>
 
           <form action={deleteAccount} className="app-panel space-y-3 p-6">
             <h2 className="text-lg font-bold text-[#111827]">Delete account</h2>
             <p className="text-sm text-[#6B7280]">This permanently deletes your account and all related data.</p>
-            <button type="submit" className="rounded-lg bg-[#DC2626] px-4 py-2 text-sm font-bold text-white hover:bg-[#b91c1c]">
+            <SubmitButton loadingText="Deleting..." className="rounded-lg bg-[#DC2626] hover:bg-[#b91c1c] disabled:bg-[#ef9a9a]">
               Delete account
-            </button>
+            </SubmitButton>
           </form>
         </div>
       </section>
