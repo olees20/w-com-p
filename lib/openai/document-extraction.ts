@@ -19,6 +19,14 @@ export type StructuredExtraction = {
   risk_level: "low" | "medium" | "high";
   summary: string;
   missing_fields: string[];
+  destination?: string | null;
+  waste_destination?: string | null;
+  disposal_site?: string | null;
+  receiving_facility?: string | null;
+  treatment_facility?: string | null;
+  destination_name?: string | null;
+  destination_address?: string | null;
+  facility?: string | null;
 };
 
 const extractionSchema = {
@@ -37,7 +45,15 @@ const extractionSchema = {
     licence_number: { type: ["string", "null"] },
     risk_level: { type: "string", enum: ["low", "medium", "high"] },
     summary: { type: "string" },
-    missing_fields: { type: "array", items: { type: "string" } }
+    missing_fields: { type: "array", items: { type: "string" } },
+    destination: { type: ["string", "null"] },
+    waste_destination: { type: ["string", "null"] },
+    disposal_site: { type: ["string", "null"] },
+    receiving_facility: { type: ["string", "null"] },
+    treatment_facility: { type: ["string", "null"] },
+    destination_name: { type: ["string", "null"] },
+    destination_address: { type: ["string", "null"] },
+    facility: { type: ["string", "null"] }
   },
   required: [
     "document_type",
@@ -104,6 +120,22 @@ function validateStructuredExtraction(data: unknown): StructuredExtraction {
   if (value.licence_number !== null && typeof value.licence_number !== "string") throw new Error("Invalid licence_number.");
   if (typeof value.risk_level !== "string" || !allowedRisk.has(value.risk_level)) throw new Error("Invalid risk_level.");
   if (typeof value.summary !== "string" || value.summary.trim().length === 0) throw new Error("Invalid summary.");
+  const optionalDestinationFields = [
+    "destination",
+    "waste_destination",
+    "disposal_site",
+    "receiving_facility",
+    "treatment_facility",
+    "destination_name",
+    "destination_address",
+    "facility"
+  ] as const;
+  for (const field of optionalDestinationFields) {
+    const fieldValue = value[field];
+    if (fieldValue !== undefined && fieldValue !== null && typeof fieldValue !== "string") {
+      throw new Error(`Invalid ${field}.`);
+    }
+  }
   if (!Array.isArray(value.missing_fields) || value.missing_fields.some((m) => typeof m !== "string")) {
     throw new Error("Invalid missing_fields.");
   }
@@ -160,7 +192,9 @@ async function runExtraction(params: { fileId: string; text: string; fileName: s
               text: `Extract structured fields from this UK waste compliance document.
 File name: ${params.fileName}
 Extracted text snippet:
-${extractedTextSnippet}`
+${extractedTextSnippet}
+
+For waste transfer notes, extract destination evidence into any relevant destination field when present, including labels like Destination, Disposal site, Receiving facility, or Treatment facility.`
             },
             {
               type: "input_file",

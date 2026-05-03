@@ -159,12 +159,7 @@ function getDestinationEvidence(doc: ReportDocument) {
     payload.raw_text_excerpt,
     doc.ai_summary
   ];
-  const destinationPatterns = [
-    /destination\s*:\s*([^\n\r.]+)/i,
-    /disposal\s*site\s*:\s*([^\n\r.]+)/i,
-    /receiving\s*facility\s*:\s*([^\n\r.]+)/i,
-    /treatment\s*facility\s*:\s*([^\n\r.]+)/i
-  ];
+  const destinationPatterns = [/^Destination:\s*(.+)$/im, /^Disposal site:\s*(.+)$/im, /^Receiving facility:\s*(.+)$/im, /^Treatment facility:\s*(.+)$/im];
 
   for (const candidate of rawTextCandidates) {
     if (typeof candidate !== "string" || !candidate.trim()) continue;
@@ -177,6 +172,10 @@ function getDestinationEvidence(doc: ReportDocument) {
   }
 
   return null;
+}
+
+export function extractDestinationFromEvidenceForTest(doc: Pick<ReportDocument, "ai_extracted_json" | "ai_summary">) {
+  return getDestinationEvidence(doc as ReportDocument);
 }
 
 function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; rules: RuleRef[]; sources: SourceRef[] }) {
@@ -285,7 +284,28 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
   }
 
   const wtnWithDestination = wtDocs
-    .map((doc) => ({ doc, destination: getDestinationEvidence(doc) }))
+    .map((doc) => {
+      const destination = getDestinationEvidence(doc);
+      if (process.env.NODE_ENV !== "production") {
+        const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
+        console.log("[health-check][destination]", {
+          file: doc.file_name,
+          candidates: {
+            destination: payload.destination,
+            disposal_site: payload.disposal_site,
+            waste_destination: payload.waste_destination,
+            facility: payload.facility,
+            treatment_facility: payload.treatment_facility,
+            receiving_facility: payload.receiving_facility,
+            destination_name: payload.destination_name,
+            destination_address: payload.destination_address,
+            raw_text_excerpt: typeof payload.raw_text_excerpt === "string" ? payload.raw_text_excerpt.slice(0, 240) : null
+          },
+          finalDestination: destination
+        });
+      }
+      return { doc, destination };
+    })
     .filter((entry) => hasText(entry.destination));
   const hasDestinationCoverage = wtnWithDestination.length > 0;
   checks.push({

@@ -28,6 +28,31 @@ type ValidationResult = {
   normalizedRisk: "low" | "medium" | "high";
 };
 
+function pickFirstText(values: Array<unknown>) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+function extractDestinationFromText(text: string) {
+  const patterns = [
+    /^Destination:\s*(.+)$/im,
+    /^Disposal site:\s*(.+)$/im,
+    /^Receiving facility:\s*(.+)$/im,
+    /^Treatment facility:\s*(.+)$/im
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]?.trim()) {
+      return match[1].trim();
+    }
+  }
+  return null;
+}
+
 function safeFileName(name: string) {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
@@ -133,8 +158,29 @@ export async function updateDocumentWithAIResults(
   };
 
   const extractedText = options?.extractedText?.trim();
+  const destinationFromAi = pickFirstText([
+    aiResult.destination,
+    aiResult.waste_destination,
+    aiResult.disposal_site,
+    aiResult.receiving_facility,
+    aiResult.treatment_facility,
+    aiResult.destination_name,
+    aiResult.destination_address,
+    aiResult.facility
+  ]);
+  const destinationFromText = extractedText ? extractDestinationFromText(extractedText) : null;
+  const destinationValue = destinationFromAi ?? destinationFromText;
+
   const aiJson = {
     ...normalizedExtraction,
+    destination: destinationValue,
+    waste_destination: aiResult.waste_destination ?? destinationValue,
+    disposal_site: aiResult.disposal_site ?? destinationValue,
+    receiving_facility: aiResult.receiving_facility ?? destinationValue,
+    treatment_facility: aiResult.treatment_facility ?? destinationValue,
+    destination_name: aiResult.destination_name ?? destinationValue,
+    destination_address: aiResult.destination_address ?? null,
+    facility: aiResult.facility ?? destinationValue,
     raw_text_excerpt: extractedText ? extractedText.slice(0, 12000) : null
   };
 
