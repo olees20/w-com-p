@@ -65,7 +65,15 @@ const extractionSchema = {
     "licence_number",
     "risk_level",
     "summary",
-    "missing_fields"
+    "missing_fields",
+    "destination",
+    "waste_destination",
+    "disposal_site",
+    "receiving_facility",
+    "treatment_facility",
+    "destination_name",
+    "destination_address",
+    "facility"
   ]
 } as const;
 
