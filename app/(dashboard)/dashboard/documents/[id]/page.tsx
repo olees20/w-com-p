@@ -66,6 +66,7 @@ export default async function DocumentDetailPage({ params }: { params: { id: str
     data: { user }
   } = await supabase.auth.getUser();
   if (!user) return null;
+  const isAdminBypass = user.email?.toLowerCase() === "admin@lithmira.com";
 
   const { data: doc } = await supabase
     .from("documents")
@@ -77,7 +78,7 @@ export default async function DocumentDetailPage({ params }: { params: { id: str
     .maybeSingle<DocumentDetail>();
 
   if (!doc) notFound();
-  let canEdit = false;
+  let canEdit = isAdminBypass;
   if (doc.health_check_id) {
     const { data: hc } = await supabase
       .from("health_checks")

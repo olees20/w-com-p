@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { buildHealthCheckReportForBusiness } from "@/lib/health-check-report";
+const ADMIN_BYPASS_EMAIL = "admin@lithmira.com";
 
 export type HealthCheckRow = {
   id: string;
@@ -22,6 +23,12 @@ function isExpired(expiresAt: string | null) {
   return d.getTime() < Date.now();
 }
 
+async function isAdminBypassUser(userId: string) {
+  const { data, error } = await supabaseAdmin.auth.admin.getUserById(userId);
+  if (error || !data?.user?.email) return false;
+  return data.user.email.toLowerCase() === ADMIN_BYPASS_EMAIL;
+}
+
 export async function getLatestHealthCheckForBusiness(businessId: string, userId: string) {
   const { data } = await supabaseAdmin
     .from("health_checks")
@@ -36,6 +43,7 @@ export async function getLatestHealthCheckForBusiness(businessId: string, userId
 }
 
 export async function getEditableActiveHealthCheck(businessId: string, userId: string) {
+  const isAdmin = await isAdminBypassUser(userId);
   const { data } = await supabaseAdmin
     .from("health_checks")
     .select("id,business_id,user_id,status,locked_at,expires_at,final_score,final_status,final_confidence,final_report,created_at")
@@ -47,9 +55,28 @@ export async function getEditableActiveHealthCheck(businessId: string, userId: s
     .limit(1)
     .maybeSingle<HealthCheckRow>();
 
-  if (!data) return null;
+  if (!data) {
+    if (!isAdmin) return null;
+    const { data: inserted, error: insertError } = await supabaseAdmin
+      .from("health_checks")
+      .insert({
+        business_id: businessId,
+        user_id: userId,
+        status: "active",
+        paid_at: new Date().toISOString(),
+        expires_at: null
+      })
+      .select("id,business_id,user_id,status,locked_at,expires_at,final_score,final_status,final_confidence,final_report,created_at")
+      .single<HealthCheckRow>();
+
+    if (insertError || !inserted) {
+      throw new Error(`Could not create admin bypass health check: ${insertError?.message ?? "Unknown error."}`);
+    }
+    return inserted;
+  }
 
   if (isExpired(data.expires_at)) {
+    if (isAdmin) return data;
     await supabaseAdmin
       .from("health_checks")
       .update({ status: "expired", locked_at: new Date().toISOString() })
@@ -63,6 +90,7 @@ export async function getEditableActiveHealthCheck(businessId: string, userId: s
 }
 
 export async function requireEditableHealthCheckForDocument(documentId: string, userId: string) {
+  const isAdmin = await isAdminBypassUser(userId);
   const { data: doc, error } = await supabaseAdmin
     .from("documents")
     .select("id,user_id,business_id,health_check_id")
@@ -74,8 +102,12 @@ export async function requireEditableHealthCheckForDocument(documentId: string, 
     throw new Error("Document not found or access denied.");
   }
 
-  if (!doc.health_check_id) {
+  if (!doc.health_check_id && !isAdmin) {
     throw new Error("Document is not linked to a health check session.");
+  }
+
+  if (isAdmin) {
+    return { doc, healthCheckId: doc.health_check_id ?? "admin-bypass" };
   }
 
   const { data: healthCheck } = await supabaseAdmin
@@ -108,8 +140,9 @@ export async function buildFinalReportSnapshot(params: { businessId: string; use
 }
 
 export async function completeHealthCheck(params: { healthCheckId: string; businessId: string; userId: string }) {
+  const isAdmin = await isAdminBypassUser(params.userId);
   const editable = await getEditableActiveHealthCheck(params.businessId, params.userId);
-  if (!editable || editable.id !== params.healthCheckId) {
+  if (!editable || (!isAdmin && editable.id !== params.healthCheckId)) {
     throw new Error("No active editable health check found.");
   }
 

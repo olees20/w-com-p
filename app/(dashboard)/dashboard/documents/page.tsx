@@ -45,6 +45,7 @@ export default async function DocumentsPage() {
     data: { user }
   } = await supabase.auth.getUser();
   if (!user) return null;
+  const isAdminBypass = user.email?.toLowerCase() === "admin@lithmira.com";
 
   const { data: business } = await supabase.from("businesses").select("id").eq("user_id", user.id).maybeSingle<{ id: string }>();
   if (!business) return null;
@@ -58,7 +59,7 @@ export default async function DocumentsPage() {
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle<{ id: string; status: string; locked_at: string | null; expires_at: string | null }>();
-  const canEdit = Boolean(activeHealthCheck);
+  const canEdit = isAdminBypass || Boolean(activeHealthCheck);
 
   const { data: docs } = await supabase
     .from("documents")
