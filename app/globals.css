@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --primary: #1e3a8a;
+  --accent: #3b82f6;
+  --success: #16a34a;
+  --warning: #f59e0b;
+  --danger: #dc2626;
+  --bg: #f9fafb;
+  --card: #ffffff;
+  --text: #111827;
+  --muted: #6b7280;
+  --border: #e5e7eb;
+}
+
+body {
+  @apply antialiased;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.container-page {
+  @apply mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8;
+}
+
+.app-shell {
+  @apply min-h-screen;
+  background: var(--bg);
+}
+
+.app-panel {
+  @apply rounded-2xl border bg-white;
+  border-color: var(--border);
+  box-shadow: 0 1px 1px rgba(17, 24, 39, 0.03), 0 10px 20px rgba(17, 24, 39, 0.04);
+}
+
+.app-sidebar {
+  background: linear-gradient(180deg, #1e3a8a 0%, #172554 100%);
+}
+
+.app-subtle {
+  color: var(--muted);
+}
