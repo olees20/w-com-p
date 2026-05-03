@@ -26,6 +26,24 @@ function scoreBadge(status: string) {
   return { label: "At Risk", cls: "bg-red-50 text-[#DC2626] border-red-200" };
 }
 
+function healthCheckStatusLabel(params: { activeCheck: HealthCheck | null; latestLocked: HealthCheck | null }) {
+  if (params.activeCheck) return "Active";
+  if (params.latestLocked?.status === "completed" || params.latestLocked?.final_report) return "Completed";
+  if (params.latestLocked?.status === "expired") return "Expired";
+  return "Draft / Test Result";
+}
+
+function renderRiskDescription(title: string, description: string | null) {
+  const t = title.toLowerCase();
+  if (t.includes("carrier") && (t.includes("expired") || t.includes("expires"))) {
+    return "During an inspection, you may be unable to demonstrate that your waste was handled by a currently valid registered carrier.";
+  }
+  if (t.includes("food waste")) {
+    return "Based on your business profile, food waste evidence was expected but not found in the uploaded documents.";
+  }
+  return description ?? "No description provided.";
+}
+
 export default async function ResultsPage() {
   const supabase = await createServerClient();
   const {
@@ -65,7 +83,7 @@ export default async function ResultsPage() {
         <h1 className="text-2xl font-extrabold tracking-tight text-[#111827]">Health Check Result</h1>
         <p className="mt-1 text-sm text-[#6B7280]">Can I prove waste compliance from the documents provided?</p>
         <p className="mt-2 text-sm text-[#6B7280]">
-          Health Check Status: {activeCheck ? "Active" : latestLocked ? (latestLocked.status === "completed" ? "Completed" : "Expired") : "No active check"}
+          Health Check Status: {healthCheckStatusLabel({ activeCheck, latestLocked })}
         </p>
         {latestLocked?.locked_at && !activeCheck ? <p className="text-xs text-[#6B7280]">Report locked on {formatDate(latestLocked.locked_at)}</p> : null}
       </section>
@@ -132,10 +150,17 @@ export default async function ResultsPage() {
           {report.top_risks.length ? report.top_risks.map((risk) => (
             <article key={risk.id} className="rounded-lg border border-[#E5E7EB] p-3 text-sm">
               <p className="font-semibold text-[#111827]">{risk.title}</p>
-              <p className="text-[#6B7280]">{risk.description ?? "No description provided."}</p>
+              <p className="text-[#6B7280]">{renderRiskDescription(risk.title, risk.description)}</p>
               <p className="text-xs text-[#6B7280]"><span className="font-semibold">Severity:</span> {(risk.severity ?? "medium").toUpperCase()}</p>
             </article>
           )) : <p className="text-sm text-[#6B7280]">No open risks found.</p>}
+        </div>
+      </section>
+
+      <section className="app-panel p-5">
+        <h2 className="text-lg font-bold text-[#111827]">Recommended Next Actions</h2>
+        <div className="mt-3 space-y-2">
+          {report.recommended_actions.length ? report.recommended_actions.map((action) => <p key={action} className="text-sm text-[#374151]">- {action}</p>) : <p className="text-sm text-[#6B7280]">No immediate action required.</p>}
         </div>
       </section>
 

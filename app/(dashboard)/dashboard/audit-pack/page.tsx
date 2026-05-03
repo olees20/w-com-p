@@ -17,6 +17,24 @@ function formatDate(value: string | null) {
   return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(d);
 }
 
+function healthCheckStatusLabel(params: { activeCheck: HealthCheck | null; latestLocked: HealthCheck | null }) {
+  if (params.activeCheck) return "Active";
+  if (params.latestLocked?.status === "completed" || params.latestLocked?.final_report) return "Completed";
+  if (params.latestLocked?.status === "expired") return "Expired";
+  return "Draft / Test Result";
+}
+
+function renderRiskDescription(title: string, description: string | null) {
+  const t = title.toLowerCase();
+  if (t.includes("carrier") && (t.includes("expired") || t.includes("expires"))) {
+    return "During an inspection, you may be unable to demonstrate that your waste was handled by a currently valid registered carrier.";
+  }
+  if (t.includes("food waste")) {
+    return "Based on your business profile, food waste evidence was expected but not found in the uploaded documents.";
+  }
+  return description ?? "No description";
+}
+
 export default async function AuditPackPage() {
   const supabase = await createServerClient();
   const {
@@ -53,7 +71,7 @@ export default async function AuditPackPage() {
         <div>
           <h1 className="text-3xl font-semibold tracking-tight text-slate-900">Waste Compliance Health Check Report</h1>
           <p className="mt-1 text-sm text-slate-600">Generated {formatDate(report.generated_at)}</p>
-          <p className="text-xs text-slate-600">Health Check Status: {activeCheck ? "Active" : latestLocked ? latestLocked.status : "No active check"}</p>
+          <p className="text-xs text-slate-600">Health Check Status: {healthCheckStatusLabel({ activeCheck, latestLocked })}</p>
           {latestLocked?.locked_at && !activeCheck ? <p className="text-xs text-slate-600">Report locked on {formatDate(latestLocked.locked_at)}</p> : null}
         </div>
         <PrintButton />
@@ -110,10 +128,17 @@ export default async function AuditPackPage() {
           {report.top_risks.length ? report.top_risks.map((risk, idx) => (
             <article key={risk.id ?? `risk-${idx}`} className="rounded-md border border-slate-200 p-3">
               <p className="font-semibold text-slate-900">{risk.title}</p>
-              <p className="text-slate-700">{risk.description ?? "No description"}</p>
+              <p className="text-slate-700">{renderRiskDescription(risk.title, risk.description)}</p>
               <p className="text-xs text-slate-600">Severity: {(risk.severity ?? "medium").toUpperCase()}</p>
             </article>
           )) : <p className="text-slate-600">No open risks found.</p>}
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm print:shadow-none">
+        <h2 className="text-lg font-semibold text-slate-900">Recommended Next Actions</h2>
+        <div className="mt-3 space-y-1 text-sm text-slate-700">
+          {report.recommended_actions.length ? report.recommended_actions.map((action) => <p key={action}>- {action}</p>) : <p>No immediate action required.</p>}
         </div>
       </section>
 
@@ -142,7 +167,7 @@ export default async function AuditPackPage() {
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm print:shadow-none">
         <h2 className="text-lg font-semibold text-slate-900">Source-Grounded References</h2>
         <div className="mt-3 space-y-1 text-sm text-slate-700">
-          {report.references.length ? report.references.map((r, idx) => <p key={r.id ?? `ref-${idx}`}>{r.title}: {r.source_url ?? "No official source reference was retrieved for this check."}</p>) : <p>No official source reference was retrieved for this check.</p>}
+          {report.references.length ? report.references.map((r, idx) => <p key={r.id ?? `ref-${idx}`}>{r.title}: {r.source_url ?? "No source reference available for this specific check."}</p>) : <p>No source reference available for this specific check.</p>}
         </div>
       </section>
 
