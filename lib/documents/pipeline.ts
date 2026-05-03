@@ -120,12 +120,22 @@ export async function analyseDocumentWithOpenAI(text: string, businessProfile: B
   return aiResult;
 }
 
-export async function updateDocumentWithAIResults(documentId: string, aiResult: StructuredExtraction) {
+export async function updateDocumentWithAIResults(
+  documentId: string,
+  aiResult: StructuredExtraction,
+  options?: { extractedText?: string }
+) {
   const validation = validateExtractedDocument(aiResult);
   const normalizedExtraction: StructuredExtraction = {
     ...aiResult,
     risk_level: validation.normalizedRisk,
     missing_fields: Array.from(new Set([...(aiResult.missing_fields ?? []), ...validation.missingFields]))
+  };
+
+  const extractedText = options?.extractedText?.trim();
+  const aiJson = {
+    ...normalizedExtraction,
+    raw_text_excerpt: extractedText ? extractedText.slice(0, 12000) : null
   };
 
   const { error } = await supabaseAdmin
@@ -140,7 +150,7 @@ export async function updateDocumentWithAIResults(documentId: string, aiResult: 
       extracted_licence_number: normalizedExtraction.licence_number,
       ai_summary: normalizedExtraction.summary,
       ai_risk_level: normalizedExtraction.risk_level,
-      ai_extracted_json: normalizedExtraction,
+      ai_extracted_json: aiJson,
       processing_status: validation.status,
       processing_error: validation.error
     })
@@ -340,7 +350,7 @@ export async function processDocument(documentId: string) {
     }
     const aiResult = await analyseDocumentWithOpenAI(text, business, file);
     console.log("AI result", aiResult);
-    await updateDocumentWithAIResults(documentId, aiResult);
+    await updateDocumentWithAIResults(documentId, aiResult, { extractedText: text });
     await generateAlertsForDocument(documentId, aiResult);
     await recalculateComplianceScore(doc.business_id);
   } catch (error) {

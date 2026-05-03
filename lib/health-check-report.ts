@@ -150,10 +150,30 @@ function getDestinationEvidence(doc: ReportDocument) {
     }
   }
 
-  const summary = doc.ai_summary ?? "";
-  const match = summary.match(/destination[:\s-]+([^.|\n]+)/i);
-  if (match?.[1]?.trim()) {
-    return match[1].trim();
+  const rawTextCandidates = [
+    payload.raw_text,
+    payload.rawText,
+    payload.extracted_text,
+    payload.extractedText,
+    payload.text,
+    payload.raw_text_excerpt,
+    doc.ai_summary
+  ];
+  const destinationPatterns = [
+    /destination\s*:\s*([^\n\r.]+)/i,
+    /disposal\s*site\s*:\s*([^\n\r.]+)/i,
+    /receiving\s*facility\s*:\s*([^\n\r.]+)/i,
+    /treatment\s*facility\s*:\s*([^\n\r.]+)/i
+  ];
+
+  for (const candidate of rawTextCandidates) {
+    if (typeof candidate !== "string" || !candidate.trim()) continue;
+    for (const pattern of destinationPatterns) {
+      const match = candidate.match(pattern);
+      if (match?.[1]?.trim()) {
+        return match[1].trim();
+      }
+    }
   }
 
   return null;
@@ -271,7 +291,7 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
   checks.push({
     check_name: "Waste destination present on WTN where available",
     result: wtDocs.length === 0 ? "cannot_verify" : hasDestinationCoverage ? "pass" : "attention_needed",
-    evidence_used: wtnWithDestination.map((entry) => `${entry.doc.file_name} (${entry.destination})`),
+    evidence_used: wtnWithDestination.map((entry) => `${entry.doc.file_name} — ${entry.destination}`),
     affected_document: wtDocs[0]?.file_name ?? null,
     recommended_action: hasDestinationCoverage ? "No immediate action." : "Ensure destination details are visible on waste transfer records.",
     source_reference: resolveSourceReference(
