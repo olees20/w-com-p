@@ -791,8 +791,12 @@ function verdict(
   confidence: HealthCheckReport["confidence"],
   scoreStatus: HealthCheckReport["score"]["status"],
   missingCount: number,
-  incompleteEvidence: boolean
+  incompleteEvidence: boolean,
+  maintenanceOnlyExpiredNow: boolean
 ) {
+  if (maintenanceOnlyExpiredNow) {
+    return "Based on the documents provided, no major evidence gaps or consistency issues were detected. However, the carrier licence evidence has expired since the transfer date, so updated evidence should be provided for ongoing compliance.";
+  }
   if (incompleteEvidence) {
     return "Core evidence is present, but some required documents are missing. Without these, compliance cannot be fully demonstrated.";
   }
@@ -824,9 +828,11 @@ function overallAssessment(params: {
   entityMismatchFail: boolean;
   crossConflicts: number;
   incompleteEvidence: boolean;
+  maintenanceOnlyExpiredNow: boolean;
 }) {
   if (params.entityMismatchFail) return "Documents appear to belong to multiple businesses";
   if (params.incompleteEvidence) return "Evidence pack incomplete";
+  if (params.maintenanceOnlyExpiredNow) return "Evidence pack usable (updates recommended)";
   const highOrMediumRisks = params.risks.filter((risk) => risk.severity === "high" || risk.severity === "medium").length;
   const passRate = params.checks.length ? params.checks.filter((c) => c.result === "pass").length / params.checks.length : 0;
   const extractionCompleteness = computeRelevantExtractionCompleteness(params.docs);
@@ -895,6 +901,7 @@ export function overallAssessmentForTest(params: {
   entityMismatchFail: boolean;
   crossConflicts: number;
   incompleteEvidence: boolean;
+  maintenanceOnlyExpiredNow: boolean;
 }) {
   return overallAssessment(params);
 }
@@ -903,9 +910,10 @@ export function verdictForTest(
   confidence: HealthCheckReport["confidence"],
   scoreStatus: HealthCheckReport["score"]["status"],
   missingCount: number,
-  incompleteEvidence: boolean
+  incompleteEvidence: boolean,
+  maintenanceOnlyExpiredNow: boolean
 ) {
-  return verdict(confidence, scoreStatus, missingCount, incompleteEvidence);
+  return verdict(confidence, scoreStatus, missingCount, incompleteEvidence, maintenanceOnlyExpiredNow);
 }
 
 function mixedBusinessPrimaryActions() {
@@ -1193,7 +1201,13 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
         })
     ).values()
   );
-  for (const action of cross.recommended_actions) {
+  const normalizedCrossActions = cross.recommended_actions.map((action) => {
+    if (/carrier licence|carrier license/i.test(action) && /ongoing|current|valid/i.test(action)) {
+      return "Upload current carrier licence evidence for ongoing compliance.";
+    }
+    return action;
+  });
+  for (const action of normalizedCrossActions) {
     if (!recommendedActions.includes(action)) recommendedActions.push(action);
   }
   for (const item of notUsedDocs) {
@@ -1230,7 +1244,9 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     status: mergedScore >= 80 ? "compliant" : mergedScore >= 50 ? "attention_needed" : "at_risk",
     breakdown: mergedBreakdown
   } as const;
-  const crossConflicts = cross.consistency_findings.filter((f) => f.status === "fail" || f.status === "attention_needed").length;
+  const maintenanceCarrierKey = "carrier_licence_valid_at_transfer_expired_now";
+  const nonMaintenanceConsistencyFindings = cross.consistency_findings.filter((f) => f.key !== maintenanceCarrierKey);
+  const crossConflicts = nonMaintenanceConsistencyFindings.filter((f) => f.status === "fail" || f.status === "attention_needed").length;
   const incompleteEvidence = isIncompleteEvidencePack({
     checks,
     docs,
@@ -1244,28 +1260,8 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     alerts: [...openAlerts, ...cross.business_level_risks],
     missingDocs,
     cannotVerifyCount: cannotVerify.size + cross.confidence_adjustments.length,
-    crossFindings: cross.consistency_findings
+    crossFindings: nonMaintenanceConsistencyFindings
   });
-  const finalConfidence = mixedBusinessHighRisk
-    ? "Low Confidence / Cannot Fully Verify"
-    : incompleteEvidence
-      ? "Medium Confidence"
-      : confidence;
-
-  const confidenceContributors = [
-    `Baseline evidence checks: ${checks.filter((c) => c.result === "pass").length}/${checks.length} passed`,
-    `Extraction completeness: ${Math.round(extractionCompleteness * 100)}%`,
-    `Business-level risks (high/medium): ${[...openAlerts, ...cross.business_level_risks].filter((a) => a.severity === "high" || a.severity === "medium").length}`,
-    `Cross-document ${pluralize(cross.consistency_findings.length, "finding", "findings")}: ${cross.consistency_findings.length}`,
-    `Irrelevant/unknown docs: ${docs.filter((d) => d.document_type === "unknown").length}/${docs.length}`,
-    `Duplicate docs flagged: ${cross.consistency_findings.find((f) => f.key === "duplicate_documents")?.evidence.length ?? 0}`,
-    `Source coverage: ${checks.filter((c) => !c.source_reference.startsWith("No source reference available")).length}/${checks.length}`
-  ];
-  if (entityValidation.finding) {
-    confidenceContributors.push(
-      `Entity match ratio: ${Math.round(entityValidation.match_ratio * 100)}% (${entityValidation.producer_names.length} producer/customer ${pluralize(entityValidation.producer_names.length, "name", "names")} detected)`
-    );
-  }
 
   const carrierCheck = checks.find((c) => c.check_name === "Carrier licence valid / not expired");
   let businessRisks = [...openAlerts, ...cross.business_level_risks].filter((risk) => {
@@ -1276,7 +1272,8 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
       ruleKey === "licence_expired_before_transfer" ||
       ruleKey === "licence_valid_at_transfer_expired_now" ||
       ruleKey === "carrier_licence_timing_invalid_at_transfer" ||
-      ruleKey === "carrier_licence_timing_expired_now";
+      ruleKey === "carrier_licence_timing_expired_now" ||
+      ruleKey === "carrier_licence_valid_at_transfer_expired_now";
     if (removeLegacyCarrierTiming) {
       return false;
     }
@@ -1299,7 +1296,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
       description: "Carrier licence was valid at the time of transfer but has since expired. Updated evidence should be provided.",
       severity: "medium",
       status: "open",
-      rule_id: "carrier_licence_timing_expired_now",
+      rule_id: "carrier_licence_valid_at_transfer_expired_now",
       document_id: null
     });
   }
@@ -1317,9 +1314,41 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
       document_id: null
     });
   }
+  const hasOnlyExpiredNowMaintenanceIssue =
+    score.score >= 90 &&
+    score.status === "compliant" &&
+    !mixedBusinessHighRisk &&
+    extractionCompleteness >= 0.8 &&
+    checks.filter((c) => c.result === "pass").length >= checks.length - 1 &&
+    businessRisks.filter((r) => r.severity === "high").length === 0 &&
+    businessRisks.filter((r) => r.severity === "medium").length <= 1 &&
+    businessRisks.some((r) => (r.rule_id ?? "") === maintenanceCarrierKey) &&
+    crossConflicts === 0;
+  const finalConfidence = mixedBusinessHighRisk
+    ? "Low Confidence / Cannot Fully Verify"
+    : hasOnlyExpiredNowMaintenanceIssue
+      ? "High Confidence"
+      : incompleteEvidence
+        ? "Medium Confidence"
+        : confidence;
+
+  const confidenceContributors = [
+    `Baseline evidence checks: ${checks.filter((c) => c.result === "pass").length}/${checks.length} passed`,
+    `Extraction completeness: ${Math.round(extractionCompleteness * 100)}%`,
+    `Business-level risks (high/medium): ${businessRisks.filter((a) => a.severity === "high" || a.severity === "medium").length}`,
+    `Cross-document ${pluralize(nonMaintenanceConsistencyFindings.length, "finding", "findings")}: ${nonMaintenanceConsistencyFindings.length}`,
+    `Irrelevant/unknown docs: ${docs.filter((d) => d.document_type === "unknown").length}/${docs.length}`,
+    `Duplicate docs flagged: ${nonMaintenanceConsistencyFindings.find((f) => f.key === "duplicate_documents")?.evidence.length ?? 0}`,
+    `Source coverage: ${checks.filter((c) => !c.source_reference.startsWith("No source reference available")).length}/${checks.length}`
+  ];
+  if (entityValidation.finding) {
+    confidenceContributors.push(
+      `Entity match ratio: ${Math.round(entityValidation.match_ratio * 100)}% (${entityValidation.producer_names.length} producer/customer ${pluralize(entityValidation.producer_names.length, "name", "names")} detected)`
+    );
+  }
 
   const informationalFindings = cross.consistency_findings.filter((f) =>
-    ["duplicate_documents", "irrelevant_documents", "historic_expired_licence_uploaded"].includes(f.key)
+    ["duplicate_documents", "irrelevant_documents", "historic_expired_licence_uploaded", maintenanceCarrierKey].includes(f.key)
   );
   const assessment = overallAssessment({
     score: score.score,
@@ -1329,14 +1358,15 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     confidence: finalConfidence,
     entityMismatchFail: entityValidation.finding?.status === "fail",
     crossConflicts,
-    incompleteEvidence
+    incompleteEvidence,
+    maintenanceOnlyExpiredNow: hasOnlyExpiredNowMaintenanceIssue
   });
   const statusReasons = [
     `Baseline evidence checks: ${checks.filter((c) => c.result === "pass").length}/${checks.length} passed`,
     crossConflicts > 0
       ? `${crossConflicts} cross-document consistency ${pluralize(crossConflicts, "issue", "issues")} found`
       : "No major cross-document consistency conflicts detected",
-    (cross.consistency_findings.some((f) => f.key.includes("licence")) || cross.consistency_findings.some((f) => f.key.includes("future") || f.key.includes("stale")))
+    (nonMaintenanceConsistencyFindings.some((f) => f.key.includes("licence")) || nonMaintenanceConsistencyFindings.some((f) => f.key.includes("future") || f.key.includes("stale")))
       ? "Date/licence evidence requires review"
       : "No major date/licence conflicts detected",
     docs.filter((d) => d.document_type === "unknown").length > 0
@@ -1362,18 +1392,20 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     plain_english_verdict:
       mixedBusinessHighRisk
         ? verdictForMixedBusinessPack()
-        : verdict(finalConfidence, score.status, missingDocs.length, incompleteEvidence),
+        : verdict(finalConfidence, score.status, missingDocs.length, incompleteEvidence, hasOnlyExpiredNowMaintenanceIssue),
     top_risks: businessRisks.filter(isBusinessRelevantRisk).slice(0, mixedBusinessHighRisk ? 4 : 5),
     missing_documents: missingDocs,
     compliance_checks: checks,
     documents: docs,
     references: refs,
     cannot_verify: Array.from(cannotVerify),
-    recommended_actions: finalActions,
-    consistency_findings: cross.consistency_findings,
+    recommended_actions: hasOnlyExpiredNowMaintenanceIssue
+      ? ["Upload current carrier licence evidence for ongoing compliance."]
+      : finalActions,
+    consistency_findings: nonMaintenanceConsistencyFindings,
     confidence_contributors: confidenceContributors,
     documents_not_used: notUsedDocs.map((d) => ({ file_name: d.file_name, reason: d.reason })),
-    consistency_summary: buildConsistencySummary(docs, cross.consistency_findings, {
+    consistency_summary: buildConsistencySummary(docs, nonMaintenanceConsistencyFindings, {
       carriersDetected: entityValidation.carrier_names,
       destinationsDetected: [...entityValidation.destination_names, ...entityValidation.site_address_names]
     }),

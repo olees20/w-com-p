@@ -275,7 +275,7 @@ export function runCrossDocumentReasoning(params: {
     });
   } else if (hasExpiredNowOnly || hasOnlyExpiredNoWtnContext) {
     findings.push({
-      key: "carrier_licence_timing_expired_now",
+      key: "carrier_licence_valid_at_transfer_expired_now",
       title: "Carrier licence valid at transfer but expired now",
       severity: "medium",
       status: "attention_needed",
