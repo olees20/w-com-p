@@ -221,9 +221,20 @@ export default async function AuditPackPage() {
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm print:shadow-none">
+        <h2 className="text-lg font-semibold text-slate-900">Additional Supporting Documents</h2>
+        <div className="mt-3 space-y-1 text-sm text-slate-700">
+          {report.additional_supporting_documents?.length
+            ? report.additional_supporting_documents.map((d) => <p key={`${d.file_name}-${d.reason}`}>- {d.file_name}: {d.reason}</p>)
+            : <p>No additional supporting documents identified.</p>}
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm print:shadow-none">
         <h2 className="text-lg font-semibold text-slate-900">Documents Not Used In The Assessment</h2>
         <div className="mt-3 space-y-1 text-sm text-slate-700">
-          {report.documents_not_used.length ? report.documents_not_used.map((d) => <p key={`${d.file_name}-${d.reason}`}>- {d.file_name}: {d.reason}</p>) : <p>All uploaded documents were used in the compliance assessment.</p>}
+          {report.documents_not_used.length
+            ? report.documents_not_used.map((d) => <p key={`${d.file_name}-${d.reason}`}>- {d.file_name}: {d.reason}</p>)
+            : <p>No irrelevant documents were excluded from the assessment.</p>}
         </div>
       </section>
 
