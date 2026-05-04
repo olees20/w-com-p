@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { runCrossDocumentReasoning, type ConsistencyFinding } from "@/lib/cross-document-reasoning";
+import { validateSingleBusinessPack } from "@/lib/entity-pack-validation";
 
 export type CheckResult = "pass" | "attention_needed" | "fail" | "cannot_verify";
 
@@ -90,6 +91,16 @@ export type HealthCheckReport = {
     document_date_range: { from: string | null; to: string | null };
     duplicate_documents_detected: number;
   };
+  entity_matching: {
+    onboarded_business_name: string | null;
+    detected_customer_or_producer_names: string[];
+    detected_carrier_or_supplier_names: string[];
+    detected_destination_or_facility_names: string[];
+    unmatched_business_names: string[];
+  };
+  overall_assessment: string;
+  status_reasons: string[];
+  informational_findings: ConsistencyFinding[];
 };
 
 function hasText(v: string | null | undefined) {
@@ -592,6 +603,17 @@ function verdict(confidence: HealthCheckReport["confidence"], scoreStatus: Healt
   return "Based on the documents provided, your business appears to be missing key evidence required to prove waste compliance.";
 }
 
+function overallAssessment(params: {
+  confidence: HealthCheckReport["confidence"];
+  entityMismatchFail: boolean;
+  crossConflicts: number;
+}) {
+  if (params.entityMismatchFail) return "Documents appear to belong to multiple businesses";
+  if (params.confidence.startsWith("Low")) return "Evidence pack cannot be reliably assessed";
+  if (params.crossConflicts > 0) return "Evidence pack needs review";
+  return "Evidence pack appears usable";
+}
+
 function isBusinessRelevantRisk(alert: ReportAlert) {
   const text = `${alert.title} ${alert.description ?? ""}`.toLowerCase();
   const patterns = [
@@ -607,17 +629,27 @@ function isBusinessRelevantRisk(alert: ReportAlert) {
     "stale",
     "site coverage",
     "missing destination",
-    "missing ewc"
+    "missing ewc",
+    "multiple businesses"
   ];
   return patterns.some((p) => text.includes(p));
+}
+
+function isCarrierExpiredRisk(alert: ReportAlert) {
+  const text = `${alert.title} ${alert.description ?? ""}`.toLowerCase();
+  return text.includes("carrier licence expired") || text.includes("carrier license expired") || text.includes("carrier licence evidence expired");
 }
 
 export function isBusinessRelevantRiskForTest(alert: ReportAlert) {
   return isBusinessRelevantRisk(alert);
 }
 
-function buildConsistencySummary(docs: ReportDocument[], findings: ConsistencyFinding[]) {
-  const carriers = Array.from(new Set(docs.map((d) => d.extracted_supplier?.trim()).filter((v): v is string => !!v)));
+function buildConsistencySummary(
+  docs: ReportDocument[],
+  findings: ConsistencyFinding[],
+  options?: { carriersDetected?: string[]; destinationsDetected?: string[] }
+) {
+  const carriers = options?.carriersDetected ?? Array.from(new Set(docs.map((d) => d.extracted_supplier?.trim()).filter((v): v is string => !!v)));
   const licenceNumbers = Array.from(new Set(docs.map((d) => d.extracted_licence_number?.trim()).filter((v): v is string => !!v)));
   const sites = Array.from(
     new Set(
@@ -635,7 +667,7 @@ function buildConsistencySummary(docs: ReportDocument[], findings: ConsistencyFi
   return {
     carriers_detected: carriers,
     licence_numbers_detected: licenceNumbers,
-    sites_or_addresses_detected: sites,
+    sites_or_addresses_detected: options?.destinationsDetected ?? sites,
     document_date_range: {
       from: dated[0] ?? null,
       to: dated[dated.length - 1] ?? null
@@ -676,6 +708,10 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   const sourceRefs = (sources ?? []) as SourceRef[];
 
   const checks = buildChecks({ business, docs, rules: refs, sources: sourceRefs });
+  const entityValidation = validateSingleBusinessPack({
+    onboardedBusinessName: business.name,
+    documents: docs
+  });
   const cross = runCrossDocumentReasoning({
     documents: docs,
     openAlerts,
@@ -694,13 +730,16 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   const cannotVerify = new Set<string>();
   if (!docs.length) cannotVerify.add("No documents uploaded for review.");
   docs.filter((d) => d.processing_status === "failed").forEach((d) => cannotVerify.add(`${d.file_name}: processing failed (${d.processing_error ?? "unknown error"}).`));
-  docs.filter((d) => d.processing_status === "review").forEach((d) => {
-    const missing = d.ai_extracted_json?.missing_fields?.length ? d.ai_extracted_json.missing_fields.join(", ") : "required fields";
-    cannotVerify.add(`${d.file_name}: missing extracted fields (${missing}).`);
-  });
+  const reviewCount = docs.filter((d) => d.processing_status === "review").length;
+  if (reviewCount > 0) {
+    cannotVerify.add(`${reviewCount} documents could not be fully interpreted and require review.`);
+  }
   checks.filter((c) => c.result === "cannot_verify").forEach((c) => cannotVerify.add(`${c.check_name}: cannot verify with current evidence.`));
   if (checks.some((c) => c.source_reference.startsWith("No source reference available"))) {
     cannotVerify.add("Some checks could not be linked to an official source reference.");
+  }
+  if (entityValidation.finding?.status === "fail") {
+    cannotVerify.add("The uploaded pack appears to mix multiple business entities, so a single-business assessment is unreliable.");
   }
   cross.cannot_verify_items.forEach((item) => cannotVerify.add(item));
 
@@ -721,11 +760,22 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   for (const action of cross.recommended_actions) {
     if (!recommendedActions.includes(action)) recommendedActions.push(action);
   }
-  const businessActionsOnly = recommendedActions.filter((action) => !/missing_fields|ewc_code_or_licence_number|document_type/i.test(action));
+  if (entityValidation.finding?.recommended_action && !recommendedActions.includes(entityValidation.finding.recommended_action)) {
+    recommendedActions.unshift(entityValidation.finding.recommended_action);
+  }
+  const businessActionsOnly = recommendedActions.filter(
+    (action) => !/missing_fields|ewc_code_or_licence_number|document_type|no action required|no immediate action/i.test(action.toLowerCase())
+  );
 
   const baseScore = scoreFromChecks({ checks, docs, business });
-  const mergedBreakdown = mergeDeductions(baseScore.breakdown, cross.score_deductions);
-  const mergedScore = mergedBreakdown.final_score;
+  const mergedBreakdown = mergeDeductions(
+    baseScore.breakdown,
+    [...cross.score_deductions, ...(entityValidation.finding ? [{ reason: entityValidation.finding.title, points: entityValidation.finding.points }] : [])]
+  );
+  let mergedScore = mergedBreakdown.final_score;
+  if (entityValidation.finding?.status === "fail") {
+    mergedScore = Math.min(mergedScore, 49);
+  }
   const score = {
     score: mergedScore,
     status: mergedScore >= 80 ? "compliant" : mergedScore >= 50 ? "attention_needed" : "at_risk",
@@ -739,15 +789,58 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     cannotVerifyCount: cannotVerify.size + cross.confidence_adjustments.length,
     crossFindings: cross.consistency_findings
   });
+  const finalConfidence = entityValidation.finding?.status === "fail" ? "Low Confidence / Cannot Fully Verify" : confidence;
 
   const confidenceContributors = [
-    `Core checks: ${checks.filter((c) => c.result === "pass").length}/${checks.length} passed`,
+    `Baseline evidence checks: ${checks.filter((c) => c.result === "pass").length}/${checks.length} passed`,
     `Extraction completeness: ${Math.round((docs.filter((d) => d.processing_status === "processed" && !d.ai_extracted_json?.missing_fields?.length).length / Math.max(1, docs.filter((d) => d.processing_status === "processed").length)) * 100)}%`,
     `Business-level risks (high/medium): ${[...openAlerts, ...cross.business_level_risks].filter((a) => a.severity === "high" || a.severity === "medium").length}`,
     `Cross-document findings: ${cross.consistency_findings.length}`,
     `Irrelevant/unknown docs: ${docs.filter((d) => d.document_type === "unknown").length}/${docs.length}`,
     `Duplicate docs flagged: ${cross.consistency_findings.find((f) => f.key === "duplicate_documents")?.evidence.length ?? 0}`,
     `Source coverage: ${checks.filter((c) => !c.source_reference.startsWith("No source reference available")).length}/${checks.length}`
+  ];
+  if (entityValidation.finding) {
+    confidenceContributors.push(`Entity match ratio: ${Math.round(entityValidation.match_ratio * 100)}% (${entityValidation.producer_names.length} producer/customer names detected)`);
+  }
+
+  const carrierCheck = checks.find((c) => c.check_name === "Carrier licence valid / not expired");
+  const businessRisks = [...openAlerts, ...cross.business_level_risks].filter((risk) => {
+    if (carrierCheck?.result === "pass" && isCarrierExpiredRisk(risk)) {
+      return false;
+    }
+    return true;
+  });
+  if (entityValidation.finding) {
+    businessRisks.unshift({
+      id: "entity-validation",
+      title: entityValidation.finding.title,
+      description: entityValidation.finding.message,
+      severity: entityValidation.finding.severity,
+      status: "open",
+      rule_id: entityValidation.finding.key,
+      document_id: null
+    });
+  }
+
+  const informationalFindings = cross.consistency_findings.filter((f) =>
+    ["duplicate_documents", "irrelevant_documents", "historic_expired_licence_uploaded"].includes(f.key)
+  );
+  const crossConflicts = cross.consistency_findings.filter((f) => f.status === "fail" || f.status === "attention_needed").length;
+  const assessment = overallAssessment({
+    confidence: finalConfidence,
+    entityMismatchFail: entityValidation.finding?.status === "fail",
+    crossConflicts
+  });
+  const statusReasons = [
+    `Baseline evidence checks: ${checks.filter((c) => c.result === "pass").length}/${checks.length} passed`,
+    crossConflicts > 0 ? `${crossConflicts} cross-document consistency issues found` : "No major cross-document consistency conflicts detected",
+    (cross.consistency_findings.some((f) => f.key.includes("licence")) || cross.consistency_findings.some((f) => f.key.includes("future") || f.key.includes("stale")))
+      ? "Date/licence evidence requires review"
+      : "No major date/licence conflicts detected",
+    docs.filter((d) => d.document_type === "unknown").length > 0
+      ? `${docs.filter((d) => d.document_type === "unknown").length} unsupported files were excluded`
+      : "No unsupported files were excluded"
   ];
 
   return {
@@ -759,9 +852,9 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
       sites_count: business.sites_count
     },
     score,
-    confidence,
-    plain_english_verdict: verdict(confidence, score.status, missingDocs.length),
-    top_risks: [...openAlerts, ...cross.business_level_risks].filter(isBusinessRelevantRisk).slice(0, 5),
+    confidence: finalConfidence,
+    plain_english_verdict: verdict(finalConfidence, score.status, missingDocs.length),
+    top_risks: businessRisks.filter(isBusinessRelevantRisk).slice(0, 5),
     missing_documents: missingDocs,
     compliance_checks: checks,
     documents: docs,
@@ -773,6 +866,19 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     documents_not_used: docs
       .filter((d) => d.document_type === "unknown")
       .map((d) => ({ file_name: d.file_name, reason: "Unsupported or unrelated document" })),
-    consistency_summary: buildConsistencySummary(docs, cross.consistency_findings)
+    consistency_summary: buildConsistencySummary(docs, cross.consistency_findings, {
+      carriersDetected: entityValidation.carrier_names,
+      destinationsDetected: entityValidation.destination_names
+    }),
+    entity_matching: {
+      onboarded_business_name: business.name,
+      detected_customer_or_producer_names: entityValidation.producer_names,
+      detected_carrier_or_supplier_names: entityValidation.carrier_names,
+      detected_destination_or_facility_names: entityValidation.destination_names,
+      unmatched_business_names: entityValidation.unmatched_producer_names
+    },
+    overall_assessment: assessment,
+    status_reasons: statusReasons,
+    informational_findings: informationalFindings
   };
 }

@@ -26,6 +26,7 @@ export function DocumentUpload() {
   const { push } = useToast();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [confirmedSingleBusinessPack, setConfirmedSingleBusinessPack] = useState(false);
   const [state, setState] = useState<UploadState>({});
   const [queue, setQueue] = useState<QueueItem[]>([]);
 
@@ -37,6 +38,10 @@ export function DocumentUpload() {
     const files = inputRef.current?.files;
     if (!files?.length) {
       setState({ error: "Please select at least one file first." });
+      return;
+    }
+    if (!confirmedSingleBusinessPack) {
+      setState({ error: "Please confirm the documents relate to the business you are checking." });
       return;
     }
 
@@ -131,6 +136,15 @@ export function DocumentUpload() {
         accept={ACCEPT}
         className="block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-medium"
       />
+      <label className="flex items-start gap-2 rounded-md border border-[#E5E7EB] bg-[#F9FAFB] p-3 text-sm text-[#374151]">
+        <input
+          type="checkbox"
+          checked={confirmedSingleBusinessPack}
+          onChange={(event) => setConfirmedSingleBusinessPack(event.target.checked)}
+          className="mt-0.5 h-4 w-4 rounded border-slate-300 text-[#1E3A8A] focus:ring-[#1E3A8A]"
+        />
+        <span>I confirm these documents relate to the business I am checking.</span>
+      </label>
 
       {queue.length ? (
         <div className="space-y-2 rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3">
@@ -157,7 +171,14 @@ export function DocumentUpload() {
       {state.error ? <p className="text-sm text-red-700">{state.error}</p> : null}
       {state.success ? <p className="text-sm text-emerald-700">{state.success}</p> : null}
 
-      <LoadingButton type="button" onClick={handleUpload} isLoading={isUploading} loadingText="Uploading..." className="w-full">
+      <LoadingButton
+        type="button"
+        onClick={handleUpload}
+        isLoading={isUploading}
+        loadingText="Uploading..."
+        className="w-full"
+        disabled={!confirmedSingleBusinessPack}
+      >
         Upload Document
       </LoadingButton>
     </div>

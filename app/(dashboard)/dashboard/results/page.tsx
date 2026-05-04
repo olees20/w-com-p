@@ -96,6 +96,7 @@ export default async function ResultsPage() {
           <p><span className="font-semibold">Documents reviewed:</span> {report.documents.length}</p>
           <p><span className="font-semibold">Sites:</span> {report.business.sites_count ?? "Not provided"}</p>
         </div>
+        <p className="mt-3 text-sm font-semibold text-[#111827]">Overall assessment: {report.overall_assessment}</p>
         <div className="mt-4 grid gap-3 md:grid-cols-3">
           <div className="rounded-lg border border-[#E5E7EB] p-3">
             <p className="text-xs uppercase text-[#6B7280]">Compliance score</p>
@@ -115,6 +116,15 @@ export default async function ResultsPage() {
       <section className="app-panel p-5">
         <h2 className="text-lg font-bold text-[#111827]">Plain-English Verdict</h2>
         <p className="mt-2 text-sm text-[#374151]">{report.plain_english_verdict}</p>
+      </section>
+
+      <section className="app-panel p-5">
+        <h2 className="text-lg font-bold text-[#111827]">Why this status?</h2>
+        <div className="mt-3 space-y-1">
+          {report.status_reasons.map((item) => (
+            <p key={item} className="text-sm text-[#374151]">- {item}</p>
+          ))}
+        </div>
       </section>
 
       <section className="app-panel p-5">
@@ -138,7 +148,7 @@ export default async function ResultsPage() {
       </section>
 
       <section className="app-panel p-5">
-        <h2 className="text-lg font-bold text-[#111827]">Compliance Checks</h2>
+        <h2 className="text-lg font-bold text-[#111827]">Baseline Evidence Checks</h2>
         <div className="mt-3 space-y-3">
           {report.compliance_checks.map((check) => (
             <article key={check.check_name} className="rounded-lg border border-[#E5E7EB] p-3 text-sm">
@@ -194,9 +204,29 @@ export default async function ResultsPage() {
       </section>
 
       <section className="app-panel p-5">
+        <h2 className="text-lg font-bold text-[#111827]">Business/Entity Matching</h2>
+        <div className="mt-3 space-y-2 text-sm text-[#374151]">
+          <p><span className="font-semibold">Onboarded business:</span> {report.entity_matching.onboarded_business_name ?? "Not provided"}</p>
+          <p><span className="font-semibold">Detected customer/producer names:</span> {report.entity_matching.detected_customer_or_producer_names.length ? report.entity_matching.detected_customer_or_producer_names.join(", ") : "None detected"}</p>
+          <p><span className="font-semibold">Detected carrier/supplier names:</span> {report.entity_matching.detected_carrier_or_supplier_names.length ? report.entity_matching.detected_carrier_or_supplier_names.join(", ") : "None detected"}</p>
+          <p><span className="font-semibold">Detected destination/facility names:</span> {report.entity_matching.detected_destination_or_facility_names.length ? report.entity_matching.detected_destination_or_facility_names.join(", ") : "None detected"}</p>
+          <p><span className="font-semibold">Unmatched business names:</span> {report.entity_matching.unmatched_business_names.length ? report.entity_matching.unmatched_business_names.join(", ") : "None"}</p>
+        </div>
+      </section>
+
+      <section className="app-panel p-5">
         <h2 className="text-lg font-bold text-[#111827]">Recommended Next Actions</h2>
         <div className="mt-3 space-y-2">
           {report.recommended_actions.length ? report.recommended_actions.map((action) => <p key={action} className="text-sm text-[#374151]">- {action}</p>) : <p className="text-sm text-[#6B7280]">No immediate action required.</p>}
+        </div>
+      </section>
+
+      <section className="app-panel p-5">
+        <h2 className="text-lg font-bold text-[#111827]">Informational Findings</h2>
+        <div className="mt-3 space-y-2">
+          {report.informational_findings.length ? report.informational_findings.map((finding) => (
+            <p key={finding.key} className="text-sm text-[#374151]">- {finding.title}: {finding.message}</p>
+          )) : <p className="text-sm text-[#6B7280]">No informational findings.</p>}
         </div>
       </section>
 
@@ -213,7 +243,6 @@ export default async function ResultsPage() {
           {report.documents_not_used.length ? report.documents_not_used.map((d) => (
             <p key={`${d.file_name}-${d.reason}`} className="text-sm text-[#374151]">- {d.file_name}: {d.reason}</p>
           )) : <p className="text-sm text-[#6B7280]">All uploaded documents were used in the compliance assessment.</p>}
-          <p className="text-xs text-[#6B7280]">No action required unless these files were intended to evidence waste compliance.</p>
         </div>
       </section>
 

@@ -1,4 +1,5 @@
 import type { ReportDocument, ReportAlert } from "@/lib/health-check-report";
+import { carrierRoleNames } from "@/lib/entity-pack-validation";
 
 type BusinessInfo = {
   produces_food_waste: boolean | null;
@@ -75,38 +76,58 @@ export function runCrossDocumentReasoning(params: {
   const now = new Date();
   const processedDocs = params.documents.filter((d) => d.processing_status === "processed");
   const findings: ConsistencyFinding[] = [];
+  const carrierLicenceDocs = processedDocs.filter((d) => d.document_type === "carrier_licence");
+  const hasValidLicenceNow = carrierLicenceDocs.some((d) => {
+    const expiry = parseDate(d.expiry_date);
+    return !!expiry && expiry >= now;
+  });
+  const hasExpiredLicenceNow = carrierLicenceDocs.some((d) => {
+    const expiry = parseDate(d.expiry_date);
+    return !!expiry && expiry < now;
+  });
 
   const carrierDocs = processedDocs
     .filter((d) => ["waste_transfer_note", "invoice", "carrier_licence", "contract"].includes(d.document_type ?? ""))
-    .filter((d) => normalizeName(d.extracted_supplier));
+    .flatMap((d) => {
+      const payload = (d.ai_extracted_json ?? {}) as Record<string, unknown>;
+      const carriers = carrierRoleNames(payload, d.document_type, d.extracted_supplier);
+      return carriers.map((carrier) => ({ doc: d, carrier }));
+    })
+    .filter((x) => normalizeName(x.carrier));
 
-  const carriers = new Map<string, ReportDocument[]>();
-  for (const doc of carrierDocs) {
-    const key = normalizeName(doc.extracted_supplier);
+  const carriers = new Map<string, Array<{ doc: ReportDocument; carrier: string }>>();
+  for (const row of carrierDocs) {
+    const key = normalizeName(row.carrier);
     const arr = carriers.get(key) ?? [];
-    arr.push(doc);
+    arr.push(row);
     carriers.set(key, arr);
   }
 
   if (carriers.size > 1) {
-    const wtns = carrierDocs.filter((d) => d.document_type === "waste_transfer_note" && d.extracted_date);
-    const invoices = carrierDocs.filter((d) => d.document_type === "invoice" && d.extracted_date);
+    const wtns = carrierDocs.filter((d) => d.doc.document_type === "waste_transfer_note" && d.doc.extracted_date);
+    const invoices = carrierDocs.filter((d) => d.doc.document_type === "invoice" && d.doc.extracted_date);
     let sameDateConflict = false;
     for (const wtn of wtns) {
       for (const invoice of invoices) {
-        if (wtn.extracted_date === invoice.extracted_date && normalizeName(wtn.extracted_supplier) !== normalizeName(invoice.extracted_supplier)) {
+        const sameDate = wtn.doc.extracted_date === invoice.doc.extracted_date;
+        const wtnDestination = normalizeName(getDestination(wtn.doc));
+        const invDestination = normalizeName(getDestination(invoice.doc));
+        const sameSiteHint = wtnDestination && invDestination ? wtnDestination === invDestination : true;
+        if (sameDate && sameSiteHint && normalizeName(wtn.carrier) !== normalizeName(invoice.carrier)) {
           sameDateConflict = true;
         }
       }
     }
 
-    const evidence = carrierDocs.slice(0, 8).map((d) => `${d.file_name} -> ${d.extracted_supplier ?? "Unknown"}`);
+    const evidence = carrierDocs.slice(0, 8).map((d) => `${d.doc.file_name} -> ${d.carrier}`);
     findings.push({
       key: "conflicting_waste_carriers",
       title: "Conflicting waste carriers detected",
       severity: sameDateConflict ? "high" : "medium",
       status: sameDateConflict ? "fail" : "attention_needed",
-      message: "Different waste carriers or suppliers were found across the uploaded documents. This may make it harder to evidence a consistent waste disposal chain.",
+      message: sameDateConflict
+        ? "Different carrier names were found for the same waste movement window (same date/site). This may make it harder to evidence a consistent waste disposal chain."
+        : "Multiple waste providers were detected. This may be normal for multi-site or multi-stream operations.",
       evidence,
       recommended_action:
         "Confirm which carrier handled each waste transfer and upload matching WTN, invoice, licence and contract evidence.",
@@ -133,6 +154,39 @@ export function runCrossDocumentReasoning(params: {
       evidence: mismatchedLicences.map((d) => `${d.file_name} -> ${(d.extracted_licence_number ?? "Unknown").trim()}`),
       recommended_action: "Upload carrier licence evidence matching each WTN licence number.",
       points: 15,
+      affects_confidence: true
+    });
+  }
+
+  if (carrierLicenceDocs.length > 0 && hasValidLicenceNow && hasExpiredLicenceNow) {
+    findings.push({
+      key: "historic_expired_licence_uploaded",
+      title: "Historic expired licence evidence also uploaded",
+      severity: "medium",
+      status: "attention_needed",
+      message:
+        "A valid licence appears to be present, but older expired evidence was also uploaded. Review which document should be relied on.",
+      evidence: carrierLicenceDocs
+        .filter((d) => d.expiry_date)
+        .map((d) => `${d.file_name} -> ${d.expiry_date}`),
+      recommended_action: "Review licence files and keep the current valid evidence clearly identifiable.",
+      points: 0,
+      affects_confidence: false
+    });
+  }
+
+  if (carrierLicenceDocs.length > 0 && !hasValidLicenceNow && hasExpiredLicenceNow) {
+    findings.push({
+      key: "carrier_licence_expired_only",
+      title: "Carrier licence evidence expired",
+      severity: "high",
+      status: "fail",
+      message: "Only expired carrier licence evidence was found.",
+      evidence: carrierLicenceDocs
+        .filter((d) => d.expiry_date)
+        .map((d) => `${d.file_name} -> ${d.expiry_date}`),
+      recommended_action: "Upload current valid carrier licence evidence.",
+      points: 0,
       affects_confidence: true
     });
   }
@@ -175,6 +229,30 @@ export function runCrossDocumentReasoning(params: {
       evidence: expiredBeforeWtn.map((d) => `${d.file_name} -> ${d.extracted_date}`),
       recommended_action: "Verify transfer records and upload valid carrier evidence for those dates.",
       points: 12,
+      affects_confidence: true
+    });
+  }
+
+  const validAtTransferButExpiredNow = wtnLicenceDocs.filter((wtn) => {
+    const wtnDate = parseDate(wtn.extracted_date);
+    if (!wtnDate) return false;
+    const linked = carrierLicences.find(
+      (c) => (c.extracted_licence_number ?? "").trim().toLowerCase() === (wtn.extracted_licence_number ?? "").trim().toLowerCase()
+    );
+    if (!linked) return false;
+    const exp = parseDate(linked.expiry_date);
+    return !!exp && exp >= wtnDate && exp < now;
+  });
+  if (validAtTransferButExpiredNow.length) {
+    findings.push({
+      key: "licence_valid_at_transfer_expired_now",
+      title: "Licence may have been valid at transfer date but is expired now",
+      severity: "medium",
+      status: "attention_needed",
+      message: "Evidence suggests the carrier licence may have been valid at the transfer date but is now expired.",
+      evidence: validAtTransferButExpiredNow.map((d) => `${d.file_name} -> ${d.extracted_date}`),
+      recommended_action: "Upload current carrier licence evidence for ongoing compliance.",
+      points: 0,
       affects_confidence: true
     });
   }
