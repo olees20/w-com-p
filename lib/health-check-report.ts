@@ -18,7 +18,7 @@ export type ReportDocument = {
   expiry_date: string | null;
   waste_type: string | null;
   ai_summary: string | null;
-  ai_extracted_json: { missing_fields?: string[] } | null;
+  ai_extracted_json: (Record<string, unknown> & { missing_fields?: string[] }) | null;
   created_at: string;
 };
 
@@ -126,23 +126,32 @@ function hasText(v: string | null | undefined) {
   return Boolean(v && v.trim().length > 0);
 }
 
-function getCarrierNameFromDoc(doc: ReportDocument) {
-  const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
-  const candidates = [
-    doc.extracted_supplier,
-    payload.carrier_name,
-    payload.waste_carrier,
-    payload.registered_carrier,
-    payload.collector,
-    payload.transporter,
-    payload.transferee,
-    payload.business_taking_waste,
-    payload.supplier
-  ];
-  for (const value of candidates) {
+function getJsonText(payload: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = payload[key];
     if (typeof value === "string" && value.trim()) return value.trim();
   }
   return null;
+}
+
+function getCarrierNameFromDoc(doc: ReportDocument) {
+  const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
+  return (
+    (typeof doc.extracted_supplier === "string" && doc.extracted_supplier.trim() ? doc.extracted_supplier.trim() : null) ??
+    getJsonText(payload, [
+      "carrier_name",
+      "waste_carrier",
+      "registered_carrier",
+      "collector",
+      "transporter",
+      "transferee",
+      "business_taking_waste",
+      "supplier",
+      "invoice_issuer",
+      "provider",
+      "contract_supplier"
+    ])
+  );
 }
 
 function getCarrierLicenceFromDoc(doc: ReportDocument) {
@@ -156,6 +165,101 @@ function getCarrierLicenceFromDoc(doc: ReportDocument) {
 
 function hasValidCarrierLicenceFields(doc: ReportDocument) {
   return hasText(getCarrierNameFromDoc(doc)) && hasText(getCarrierLicenceFromDoc(doc)) && hasText(doc.expiry_date);
+}
+
+function getProducerOrCustomerName(doc: ReportDocument) {
+  const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
+  return getJsonText(payload, [
+    "producer_name",
+    "customer_name",
+    "client_name",
+    "waste_producer",
+    "producer",
+    "current_holder",
+    "transferor",
+    "invoice_recipient",
+    "customer",
+    "client"
+  ]);
+}
+
+function getDestinationName(doc: ReportDocument) {
+  const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
+  return getJsonText(payload, [
+    "destination",
+    "destination_name",
+    "waste_destination",
+    "disposal_site",
+    "receiving_facility",
+    "treatment_facility",
+    "transfer_station",
+    "facility",
+    "destination_address"
+  ]);
+}
+
+function getInvoiceServiceDescription(doc: ReportDocument) {
+  const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
+  if (typeof doc.ai_summary === "string" && doc.ai_summary.trim()) return doc.ai_summary.trim();
+  return getJsonText(payload, ["service_description", "line_items", "description", "services"]);
+}
+
+function getContractStartOrStatus(doc: ReportDocument) {
+  const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
+  return getJsonText(payload, ["start_date", "contract_start_date", "contract_status", "status"]);
+}
+
+function computeDocumentCompleteness(doc: ReportDocument) {
+  const docType = doc.document_type ?? "unknown";
+  if (!(doc.processing_status === "processed" || doc.processing_status === "review")) {
+    return { applicable: false, ratio: 0 };
+  }
+
+  const fields: Array<boolean> = [];
+  if (docType === "carrier_licence") {
+    fields.push(hasText(getCarrierNameFromDoc(doc)));
+    fields.push(hasText(getCarrierLicenceFromDoc(doc)));
+    fields.push(hasText(doc.expiry_date));
+  } else if (docType === "waste_transfer_note") {
+    fields.push(hasText(getProducerOrCustomerName(doc)));
+    fields.push(hasText(getCarrierNameFromDoc(doc)));
+    fields.push(hasText(getCarrierLicenceFromDoc(doc)));
+    fields.push(hasText(doc.waste_type));
+    fields.push(hasText(doc.extracted_ewc_code));
+    fields.push(hasText(doc.extracted_date));
+    fields.push(hasText(getDestinationName(doc)));
+  } else if (docType === "invoice") {
+    fields.push(hasText(getCarrierNameFromDoc(doc)));
+    fields.push(hasText(getProducerOrCustomerName(doc)));
+    fields.push(hasText(doc.extracted_date));
+    fields.push(hasText(getInvoiceServiceDescription(doc)));
+  } else if (docType === "contract" || docType === "food_waste_contract") {
+    fields.push(hasText(getCarrierNameFromDoc(doc)));
+    fields.push(hasText(getProducerOrCustomerName(doc)));
+    fields.push(hasText(getInvoiceServiceDescription(doc)));
+    fields.push(hasText(getContractStartOrStatus(doc)));
+  } else if (docType === "hazardous_waste_note") {
+    fields.push(hasText(getProducerOrCustomerName(doc)));
+    fields.push(hasText(getCarrierNameFromDoc(doc)));
+    fields.push(hasText(doc.extracted_date));
+    fields.push(hasText(doc.waste_type));
+    fields.push(hasText(doc.extracted_ewc_code));
+  } else {
+    return { applicable: false, ratio: 0 };
+  }
+
+  const present = fields.filter(Boolean).length;
+  return { applicable: true, ratio: fields.length ? present / fields.length : 0 };
+}
+
+function computeRelevantExtractionCompleteness(docs: ReportDocument[]) {
+  const metrics = docs.map(computeDocumentCompleteness).filter((m) => m.applicable);
+  if (!metrics.length) return 0;
+  return Math.max(0, Math.min(1, metrics.reduce((sum, item) => sum + item.ratio, 0) / metrics.length));
+}
+
+export function computeRelevantExtractionCompletenessForTest(docs: ReportDocument[]) {
+  return computeRelevantExtractionCompleteness(docs);
 }
 
 function lower(v: string | null | undefined) {
@@ -577,11 +681,8 @@ function confidenceFromSignals(params: {
   const highOrMedium = alerts.filter((a) => a.severity === "high" || a.severity === "medium").length;
   const highOnly = alerts.filter((a) => a.severity === "high").length;
   const cannotVerifyChecks = checks.filter((c) => c.result === "cannot_verify").length;
-  const noRefChecks = checks.filter((c) => c.source_reference.startsWith("No source reference available")).length;
   const requiredFails = checks.filter((c) => ["Waste Transfer Note present", "Carrier licence evidence present", "Carrier licence valid / not expired", "Food waste evidence present", "Hazardous waste consignment note present"].includes(c.check_name) && c.result === "fail").length;
-  const completeFieldDocs = docs.filter((d) => d.processing_status === "processed" && !d.ai_extracted_json?.missing_fields?.length).length;
-  const processedDocs = docs.filter((d) => d.processing_status === "processed").length;
-  const extractionCompleteness = processedDocs === 0 ? 0 : completeFieldDocs / processedDocs;
+  const extractionCompleteness = computeRelevantExtractionCompleteness(docs);
   const unknownCount = docs.filter((d) => d.document_type === "unknown").length;
   const irrelevantRatio = docs.length === 0 ? 1 : unknownCount / docs.length;
   const duplicateCount = crossFindings.find((f) => f.key === "duplicate_documents")?.evidence.length ?? 0;
@@ -591,6 +692,10 @@ function confidenceFromSignals(params: {
   const hasFutureDatedKey = crossFindings.some((f) => f.key === "future_dated_documents");
   const hasStaleWtn = crossFindings.some((f) => f.key === "stale_wtn");
   const majorCrossConflictCount = crossFindings.filter((f) => f.status === "fail").length;
+  const sourceCoverage = checks.length
+    ? checks.filter((c) => !c.source_reference.startsWith("No source reference available")).length / checks.length
+    : 0;
+  const baselinePassRate = checks.length ? checks.filter((c) => c.result === "pass").length / checks.length : 0;
 
   let level: 1 | 2 | 3 = 2; // 1 low, 2 medium, 3 high
 
@@ -600,7 +705,7 @@ function confidenceFromSignals(params: {
     failed >= Math.max(1, Math.ceil(docs.length * 0.5)) ||
     highOnly >= 2 ||
     majorCrossConflictCount >= 2 ||
-    extractionCompleteness < 0.5 ||
+    extractionCompleteness < 0.45 ||
     irrelevantRatio > 0.5;
 
   if (hardLow) {
@@ -612,8 +717,9 @@ function confidenceFromSignals(params: {
       review === 0 &&
       highOrMedium === 0 &&
       requiredFails === 0 &&
-      noRefChecks <= 1 &&
-      extractionCompleteness >= 0.9 &&
+      sourceCoverage >= 0.7 &&
+      extractionCompleteness >= 0.7 &&
+      baselinePassRate >= 0.95 &&
       irrelevantRatio <= 0.15 &&
       duplicateRatio <= 0.2 &&
       majorCrossConflictCount === 0;
@@ -647,14 +753,18 @@ export function assessConfidenceForTest(params: {
 
 function verdict(confidence: HealthCheckReport["confidence"], scoreStatus: HealthCheckReport["score"]["status"], missingCount: number) {
   if (confidence.startsWith("Low")) {
-    return "We could not fully verify compliance because the uploaded documents contain inconsistencies or unsupported files.";
+    return "We could not fully verify compliance from the documents provided.";
   }
 
   if (scoreStatus === "compliant" && missingCount === 0) {
-    return "Based on the documents provided, your records appear reasonably complete for key waste compliance evidence checks.";
+    return "Based on the documents provided, no major evidence gaps or consistency issues were detected. Keep these records available for inspection and update them when arrangements change.";
   }
 
-  return "Based on the documents provided, your business appears to be missing key evidence required to prove waste compliance.";
+  if (scoreStatus === "attention_needed") {
+    return "Most core evidence was found, but some issues should be reviewed before relying on this pack.";
+  }
+
+  return "We could not fully verify compliance from the documents provided.";
 }
 
 function verdictForMixedBusinessPack() {
@@ -662,14 +772,36 @@ function verdictForMixedBusinessPack() {
 }
 
 function overallAssessment(params: {
+  score: number;
+  checks: BaselineCheck[];
+  risks: ReportAlert[];
+  docs: ReportDocument[];
   confidence: HealthCheckReport["confidence"];
   entityMismatchFail: boolean;
   crossConflicts: number;
 }) {
   if (params.entityMismatchFail) return "Documents appear to belong to multiple businesses";
+  const highOrMediumRisks = params.risks.filter((risk) => risk.severity === "high" || risk.severity === "medium").length;
+  const passRate = params.checks.length ? params.checks.filter((c) => c.result === "pass").length / params.checks.length : 0;
+  const extractionCompleteness = computeRelevantExtractionCompleteness(params.docs);
+  const coreFailures = params.checks.filter((c) =>
+    ["Waste Transfer Note present", "Carrier licence evidence present", "Carrier licence valid / not expired"].includes(c.check_name) && c.result === "fail"
+  ).length;
+
+  if (
+    params.score >= 80 &&
+    passRate >= 0.9 &&
+    highOrMediumRisks === 0 &&
+    params.crossConflicts === 0 &&
+    extractionCompleteness >= 0.7 &&
+    coreFailures === 0
+  ) {
+    return "Evidence pack appears usable";
+  }
   if (params.confidence.startsWith("Low")) return "Evidence pack cannot be reliably assessed";
   if (params.crossConflicts > 0) return "Evidence pack needs review";
-  return "Evidence pack appears usable";
+  if (params.score >= 70 || passRate >= 0.75) return "Evidence pack needs review";
+  return "Evidence pack cannot be reliably assessed";
 }
 
 function mixedBusinessPrimaryActions() {
@@ -979,6 +1111,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     status: mergedScore >= 80 ? "compliant" : mergedScore >= 50 ? "attention_needed" : "at_risk",
     breakdown: mergedBreakdown
   } as const;
+  const extractionCompleteness = computeRelevantExtractionCompleteness(docs);
   const confidence = confidenceFromSignals({
     checks,
     docs,
@@ -991,7 +1124,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
 
   const confidenceContributors = [
     `Baseline evidence checks: ${checks.filter((c) => c.result === "pass").length}/${checks.length} passed`,
-    `Extraction completeness: ${Math.round((docs.filter((d) => d.processing_status === "processed" && !d.ai_extracted_json?.missing_fields?.length).length / Math.max(1, docs.filter((d) => d.processing_status === "processed").length)) * 100)}%`,
+    `Extraction completeness: ${Math.round(extractionCompleteness * 100)}%`,
     `Business-level risks (high/medium): ${[...openAlerts, ...cross.business_level_risks].filter((a) => a.severity === "high" || a.severity === "medium").length}`,
     `Cross-document ${pluralize(cross.consistency_findings.length, "finding", "findings")}: ${cross.consistency_findings.length}`,
     `Irrelevant/unknown docs: ${docs.filter((d) => d.document_type === "unknown").length}/${docs.length}`,
@@ -1031,6 +1164,10 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   );
   const crossConflicts = cross.consistency_findings.filter((f) => f.status === "fail" || f.status === "attention_needed").length;
   const assessment = overallAssessment({
+    score: score.score,
+    checks,
+    risks: businessRisks,
+    docs,
     confidence: finalConfidence,
     entityMismatchFail: entityValidation.finding?.status === "fail",
     crossConflicts
