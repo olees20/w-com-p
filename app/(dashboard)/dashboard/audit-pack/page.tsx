@@ -183,6 +183,7 @@ export default async function AuditPackPage() {
           <p><span className="font-semibold">Detected customer/producer names:</span> {report.entity_matching.detected_customer_or_producer_names.length ? report.entity_matching.detected_customer_or_producer_names.join(", ") : "None detected"}</p>
           <p><span className="font-semibold">Detected carrier/supplier names:</span> {report.entity_matching.detected_carrier_or_supplier_names.length ? report.entity_matching.detected_carrier_or_supplier_names.join(", ") : "None detected"}</p>
           <p><span className="font-semibold">Detected destination/facility names:</span> {report.entity_matching.detected_destination_or_facility_names.length ? report.entity_matching.detected_destination_or_facility_names.join(", ") : "None detected"}</p>
+          <p><span className="font-semibold">Unclear entities:</span> {report.entity_matching.unclear_entity_names.length ? report.entity_matching.unclear_entity_names.join(", ") : "None detected"}</p>
           <p><span className="font-semibold">Unmatched business names:</span> {report.entity_matching.unmatched_business_names.length ? report.entity_matching.unmatched_business_names.join(", ") : "None"}</p>
         </div>
       </section>

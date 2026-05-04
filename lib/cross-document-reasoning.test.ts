@@ -29,7 +29,11 @@ test("flags cross-document inconsistencies", () => {
         extracted_licence_number: "CBDU123456",
         extracted_ewc_code: "20 03 01",
         waste_type: "Mixed Municipal Waste",
-        ai_extracted_json: { destination: "Leeds Waste Processing Facility" } as unknown as { missing_fields?: string[] }
+        ai_extracted_json: {
+          destination: "Leeds Waste Processing Facility",
+          carrier_name: "York Waste Services Ltd",
+          producer_name: "Bean & Brew Café Ltd"
+        } as unknown as { missing_fields?: string[] }
       },
       {
         ...baseDoc,
@@ -38,7 +42,11 @@ test("flags cross-document inconsistencies", () => {
         document_type: "invoice",
         extracted_supplier: "GreenCycle Waste Ltd",
         extracted_date: "2026-03-14",
-        extracted_licence_number: null
+        extracted_licence_number: null,
+        ai_extracted_json: {
+          invoice_issuer: "GreenCycle Waste Ltd",
+          client_name: "Bean & Brew Café Ltd"
+        } as unknown as { missing_fields?: string[] }
       },
       {
         ...baseDoc,

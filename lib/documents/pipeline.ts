@@ -37,6 +37,34 @@ function pickFirstText(values: Array<unknown>) {
   return null;
 }
 
+function normalizeRoleFields(extraction: StructuredExtraction) {
+  const producerName = pickFirstText([
+    extraction.producer_name,
+    extraction.customer_name,
+    extraction.client_name,
+    extraction.current_holder,
+    extraction.transferor,
+    extraction.site_name
+  ]);
+  const carrierName = pickFirstText([
+    extraction.carrier_name,
+    extraction.waste_carrier,
+    extraction.registered_carrier,
+    extraction.collector,
+    extraction.transporter,
+    extraction.transferee,
+    extraction.collected_by,
+    extraction.business_taking_waste
+  ]);
+  const carrierLicenceNumber = pickFirstText([
+    extraction.carrier_licence_number,
+    extraction.registration_number,
+    extraction.licence_number
+  ]);
+
+  return { producerName, carrierName, carrierLicenceNumber };
+}
+
 function extractDestinationFromText(text: string) {
   const patterns = [
     /^Destination:\s*(.+)$/im,
@@ -151,8 +179,11 @@ export async function updateDocumentWithAIResults(
   options?: { extractedText?: string }
 ) {
   const validation = validateExtractedDocument(aiResult);
+  const roles = normalizeRoleFields(aiResult);
   const normalizedExtraction: StructuredExtraction = {
     ...aiResult,
+    supplier: roles.carrierName ?? aiResult.supplier,
+    licence_number: roles.carrierLicenceNumber ?? aiResult.licence_number,
     risk_level: validation.normalizedRisk,
     missing_fields: Array.from(new Set([...(aiResult.missing_fields ?? []), ...validation.missingFields]))
   };
@@ -173,6 +204,22 @@ export async function updateDocumentWithAIResults(
 
   const aiJson = {
     ...normalizedExtraction,
+    producer_name: aiResult.producer_name ?? roles.producerName,
+    customer_name: aiResult.customer_name ?? roles.producerName,
+    client_name: aiResult.client_name ?? roles.producerName,
+    current_holder: aiResult.current_holder ?? roles.producerName,
+    transferor: aiResult.transferor ?? roles.producerName,
+    site_name: aiResult.site_name ?? null,
+    carrier_name: aiResult.carrier_name ?? roles.carrierName,
+    waste_carrier: aiResult.waste_carrier ?? roles.carrierName,
+    registered_carrier: aiResult.registered_carrier ?? roles.carrierName,
+    collector: aiResult.collector ?? roles.carrierName,
+    transporter: aiResult.transporter ?? roles.carrierName,
+    transferee: aiResult.transferee ?? roles.carrierName,
+    collected_by: aiResult.collected_by ?? roles.carrierName,
+    business_taking_waste: aiResult.business_taking_waste ?? roles.carrierName,
+    carrier_licence_number: aiResult.carrier_licence_number ?? roles.carrierLicenceNumber,
+    registration_number: aiResult.registration_number ?? roles.carrierLicenceNumber,
     destination: destinationValue,
     waste_destination: aiResult.waste_destination ?? destinationValue,
     disposal_site: aiResult.disposal_site ?? destinationValue,

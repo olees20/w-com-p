@@ -15,6 +15,7 @@ export type EntityValidationResult = {
   producer_names: string[];
   carrier_names: string[];
   destination_names: string[];
+  unclear_entity_names: string[];
   unmatched_producer_names: string[];
   match_ratio: number;
 };
@@ -45,15 +46,22 @@ function pickRoleNames(payload: Record<string, unknown>, keys: string[]) {
 
 export function producerRoleNames(payload: Record<string, unknown>) {
   return pickRoleNames(payload, [
+    "producer_name",
+    "customer_name",
+    "client_name",
+    "current_holder",
+    "transferor",
+    "site_name",
     "client",
     "customer",
     "producer",
     "waste_producer",
+    "premises",
+    "collection_point_business",
+    "site_business",
+    "from",
+    "collected_from",
     "business_name",
-    "site_name",
-    "customer_name",
-    "client_name",
-    "producer_name",
     "invoice_recipient",
     "recipient"
   ]);
@@ -61,15 +69,31 @@ export function producerRoleNames(payload: Record<string, unknown>) {
 
 export function carrierRoleNames(payload: Record<string, unknown>, documentType: string | null, extractedSupplier: string | null) {
   const explicitCarrierKeysByType: Record<string, string[]> = {
-    waste_transfer_note: ["carrier", "carrier_name", "supplier", "contractor"],
-    invoice: ["invoice_issuer", "issuer", "supplier", "provider", "contractor"],
-    carrier_licence: ["licensed_business", "carrier", "carrier_name", "supplier"],
-    contract: ["supplier", "provider", "contractor", "carrier"]
+    waste_transfer_note: [
+      "carrier_name",
+      "carrier",
+      "waste_carrier",
+      "registered_carrier",
+      "collector",
+      "transporter",
+      "transferee",
+      "business_taking_waste",
+      "collected_by"
+    ],
+    invoice: ["invoice_issuer", "issuer", "supplier_name", "supplier", "provider", "contractor", "carrier_name"],
+    carrier_licence: ["licensed_business", "carrier_name", "carrier", "waste_carrier", "registered_carrier", "supplier"],
+    contract: ["supplier_name", "supplier", "provider", "contractor", "carrier_name", "carrier"]
   };
 
-  const keys = explicitCarrierKeysByType[documentType ?? ""] ?? ["carrier", "supplier", "contractor", "provider"];
+  const keys = explicitCarrierKeysByType[documentType ?? ""] ?? ["carrier_name", "carrier", "supplier_name", "supplier", "contractor", "provider"];
   const explicit = pickRoleNames(payload, keys);
   if (explicit.length) return explicit;
+
+  // fallback is only allowed for roles where extracted supplier is likely to be provider-side
+  const allowSupplierFallback = documentType === "carrier_licence" || documentType === "contract";
+  if (!allowSupplierFallback) {
+    return [];
+  }
 
   // fallback to extracted supplier only when no explicit producer/client role collides
   if (extractedSupplier?.trim()) {
@@ -84,12 +108,14 @@ export function carrierRoleNames(payload: Record<string, unknown>, documentType:
 
 export function validateSingleBusinessPack(params: {
   onboardedBusinessName: string | null;
+  knownSiteNames?: string[];
   documents: ReportDocument[];
 }): EntityValidationResult {
   const processed = params.documents.filter((d) => d.processing_status === "processed");
   const producerCandidates: string[] = [];
   const carrierCandidates: string[] = [];
   const destinationCandidates: string[] = [];
+  const unclearCandidates: string[] = [];
 
   for (const doc of processed) {
     const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
@@ -111,16 +137,45 @@ export function validateSingleBusinessPack(params: {
     producerCandidates.push(...producers);
     carrierCandidates.push(...carriers);
     destinationCandidates.push(...destinations);
+
+    const unclearFromPayload = pickRoleNames(payload, ["business_name", "company_name", "organisation_name", "entity_name", "name"]);
+    const knownSet = new Set(
+      [...producers, ...carriers, ...destinations]
+        .map((value) => normalizeName(value))
+        .filter(Boolean)
+    );
+    unclearCandidates.push(
+      ...unclearFromPayload.filter((value) => {
+        const normalized = normalizeName(value);
+        return normalized && !knownSet.has(normalized);
+      })
+    );
   }
 
   const producerNames = unique(producerCandidates);
-  const carrierNames = unique(carrierCandidates);
-  const destinationNames = unique(destinationCandidates);
-
+  const producerSet = new Set(producerNames.map((name) => normalizeName(name)));
+  const destinationSet = new Set(destinationCandidates.map((name) => normalizeName(name)));
   const onboarded = normalizeName(params.onboardedBusinessName);
+  const carrierNames = unique(
+    carrierCandidates.filter((name) => {
+      const n = normalizeName(name);
+      if (!n) return false;
+      if (producerSet.has(n)) return false;
+      if (destinationSet.has(n)) return false;
+      if (onboarded && (n.includes(onboarded) || onboarded.includes(n))) return false;
+      return true;
+    })
+  );
+  const destinationNames = unique(destinationCandidates);
+  const unclearEntityNames = unique(unclearCandidates);
+
+  const normalizedKnownSites = (params.knownSiteNames ?? []).map((name) => normalizeName(name)).filter(Boolean);
   const matched = producerNames.filter((name) => {
     const n = normalizeName(name);
-    return n && onboarded && (n.includes(onboarded) || onboarded.includes(n));
+    if (!n) return false;
+    const businessMatch = onboarded && (n.includes(onboarded) || onboarded.includes(n));
+    const siteMatch = normalizedKnownSites.some((site) => n.includes(site) || site.includes(n));
+    return Boolean(businessMatch || siteMatch);
   });
   const unmatched = producerNames.filter((name) => !matched.includes(name));
   const matchRatio = producerNames.length === 0 ? 0 : matched.length / producerNames.length;
@@ -156,6 +211,7 @@ export function validateSingleBusinessPack(params: {
     producer_names: producerNames,
     carrier_names: carrierNames,
     destination_names: destinationNames,
+    unclear_entity_names: unclearEntityNames,
     unmatched_producer_names: unmatched,
     match_ratio: matchRatio
   };

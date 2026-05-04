@@ -96,11 +96,19 @@ export type HealthCheckReport = {
     detected_customer_or_producer_names: string[];
     detected_carrier_or_supplier_names: string[];
     detected_destination_or_facility_names: string[];
+    unclear_entity_names: string[];
     unmatched_business_names: string[];
   };
   overall_assessment: string;
   status_reasons: string[];
   informational_findings: ConsistencyFinding[];
+};
+
+type NotUsedClassification = {
+  file_name: string;
+  reason: string;
+  recommended_action: string | null;
+  category: "unrelated" | "unreadable" | "ambiguous" | "potentially_relevant_unreadable";
 };
 
 function hasText(v: string | null | undefined) {
@@ -603,6 +611,10 @@ function verdict(confidence: HealthCheckReport["confidence"], scoreStatus: Healt
   return "Based on the documents provided, your business appears to be missing key evidence required to prove waste compliance.";
 }
 
+function verdictForMixedBusinessPack() {
+  return "We could not reliably assess this health check because the uploaded documents appear to contain records for multiple businesses or unrelated entities.";
+}
+
 function overallAssessment(params: {
   confidence: HealthCheckReport["confidence"];
   entityMismatchFail: boolean;
@@ -633,6 +645,74 @@ function isBusinessRelevantRisk(alert: ReportAlert) {
     "multiple businesses"
   ];
   return patterns.some((p) => text.includes(p));
+}
+
+function looksLikeHazardousEvidence(doc: ReportDocument) {
+  const text = `${doc.file_name} ${doc.document_type ?? ""} ${doc.ai_summary ?? ""}`.toLowerCase();
+  return /hazard|consignment|hwcn|ewc|dangerous waste/i.test(text);
+}
+
+function classifyNotUsedDocuments(docs: ReportDocument[], business: BusinessInfo): NotUsedClassification[] {
+  const out: NotUsedClassification[] = [];
+  for (const doc of docs) {
+    const isUnknown = (doc.document_type ?? "unknown") === "unknown";
+    const isFailed = doc.processing_status === "failed";
+    const isReview = doc.processing_status === "review";
+
+    if (isFailed) {
+      if (business.produces_hazardous_waste && looksLikeHazardousEvidence(doc)) {
+        out.push({
+          file_name: doc.file_name,
+          reason: "Potentially relevant but unreadable",
+          recommended_action: "Re-upload a clearer copy if hazardous waste applies to this business.",
+          category: "potentially_relevant_unreadable"
+        });
+      } else {
+        out.push({
+          file_name: doc.file_name,
+          reason: "Unreadable / processing failed",
+          recommended_action: `Re-upload ${doc.file_name} if it was intended to evidence waste compliance.`,
+          category: "unreadable"
+        });
+      }
+      continue;
+    }
+
+    if (isUnknown) {
+      const likelyWasteRelated = /waste|carrier|licen[cs]e|invoice|transfer|consignment|recycl/i.test(doc.file_name.toLowerCase());
+      out.push({
+        file_name: doc.file_name,
+        reason: likelyWasteRelated ? "Ambiguous document type" : "Unrelated to waste compliance",
+        recommended_action: likelyWasteRelated ? `Re-upload ${doc.file_name} if it was intended to evidence waste compliance.` : null,
+        category: likelyWasteRelated ? "ambiguous" : "unrelated"
+      });
+      continue;
+    }
+
+    if (isReview && isUnknown) {
+      out.push({
+        file_name: doc.file_name,
+        reason: "Ambiguous document type",
+        recommended_action: `Re-upload ${doc.file_name} if it was intended to evidence waste compliance.`,
+        category: "ambiguous"
+      });
+    }
+  }
+  return out;
+}
+
+export function classifyNotUsedDocumentsForTest(
+  docs: ReportDocument[],
+  business: Pick<BusinessInfo, "produces_hazardous_waste">
+) {
+  return classifyNotUsedDocuments(docs, {
+    id: "test",
+    name: "test",
+    business_type: "test",
+    sites_count: 1,
+    produces_food_waste: false,
+    produces_hazardous_waste: business.produces_hazardous_waste
+  });
 }
 
 function isCarrierExpiredRisk(alert: ReportAlert) {
@@ -727,13 +807,15 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   if (business.produces_food_waste && checks.find((c) => c.check_name === "Food waste evidence present")?.result !== "pass") missingDocs.push("Food waste documentation");
   if (business.produces_hazardous_waste && checks.find((c) => c.check_name === "Hazardous waste consignment note present")?.result !== "pass") missingDocs.push("Hazardous waste consignment note");
 
+  const notUsedDocs = classifyNotUsedDocuments(docs, business);
   const cannotVerify = new Set<string>();
   if (!docs.length) cannotVerify.add("No documents uploaded for review.");
-  docs.filter((d) => d.processing_status === "failed").forEach((d) => cannotVerify.add(`${d.file_name}: processing failed (${d.processing_error ?? "unknown error"}).`));
   const reviewCount = docs.filter((d) => d.processing_status === "review").length;
-  if (reviewCount > 0) {
-    cannotVerify.add(`${reviewCount} documents could not be fully interpreted and require review.`);
-  }
+  if (reviewCount > 0) cannotVerify.add(`${reviewCount} documents could not be fully interpreted.`);
+  const unsupportedCount = notUsedDocs.filter((d) => d.category === "unrelated" || d.category === "ambiguous").length;
+  if (unsupportedCount > 0) cannotVerify.add(`${unsupportedCount} unsupported documents were excluded from the assessment.`);
+  const failedCount = notUsedDocs.filter((d) => d.category === "unreadable" || d.category === "potentially_relevant_unreadable").length;
+  if (failedCount > 0) cannotVerify.add(`${failedCount} document${failedCount === 1 ? "" : "s"} failed processing and should be re-uploaded if relevant.`);
   checks.filter((c) => c.result === "cannot_verify").forEach((c) => cannotVerify.add(`${c.check_name}: cannot verify with current evidence.`));
   if (checks.some((c) => c.source_reference.startsWith("No source reference available"))) {
     cannotVerify.add("Some checks could not be linked to an official source reference.");
@@ -759,6 +841,11 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   );
   for (const action of cross.recommended_actions) {
     if (!recommendedActions.includes(action)) recommendedActions.push(action);
+  }
+  for (const item of notUsedDocs) {
+    if (item.recommended_action && !recommendedActions.includes(item.recommended_action)) {
+      recommendedActions.push(item.recommended_action);
+    }
   }
   if (entityValidation.finding?.recommended_action && !recommendedActions.includes(entityValidation.finding.recommended_action)) {
     recommendedActions.unshift(entityValidation.finding.recommended_action);
@@ -805,12 +892,23 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   }
 
   const carrierCheck = checks.find((c) => c.check_name === "Carrier licence valid / not expired");
-  const businessRisks = [...openAlerts, ...cross.business_level_risks].filter((risk) => {
+  let businessRisks = [...openAlerts, ...cross.business_level_risks].filter((risk) => {
     if (carrierCheck?.result === "pass" && isCarrierExpiredRisk(risk)) {
       return false;
     }
     return true;
   });
+  if (entityValidation.finding?.status === "fail") {
+    businessRisks = businessRisks.map((risk) => {
+      const isCarrierConflict = (risk.rule_id ?? "").toLowerCase() === "conflicting_waste_carriers";
+      if (!isCarrierConflict) return risk;
+      return {
+        ...risk,
+        severity: "low",
+        description: "Carrier inconsistencies were detected, but these may be caused by mixed-business documents."
+      };
+    });
+  }
   if (entityValidation.finding) {
     businessRisks.unshift({
       id: "entity-validation",
@@ -853,7 +951,10 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     },
     score,
     confidence: finalConfidence,
-    plain_english_verdict: verdict(finalConfidence, score.status, missingDocs.length),
+    plain_english_verdict:
+      entityValidation.finding?.status === "fail"
+        ? verdictForMixedBusinessPack()
+        : verdict(finalConfidence, score.status, missingDocs.length),
     top_risks: businessRisks.filter(isBusinessRelevantRisk).slice(0, 5),
     missing_documents: missingDocs,
     compliance_checks: checks,
@@ -863,9 +964,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     recommended_actions: businessActionsOnly,
     consistency_findings: cross.consistency_findings,
     confidence_contributors: confidenceContributors,
-    documents_not_used: docs
-      .filter((d) => d.document_type === "unknown")
-      .map((d) => ({ file_name: d.file_name, reason: "Unsupported or unrelated document" })),
+    documents_not_used: notUsedDocs.map((d) => ({ file_name: d.file_name, reason: d.reason })),
     consistency_summary: buildConsistencySummary(docs, cross.consistency_findings, {
       carriersDetected: entityValidation.carrier_names,
       destinationsDetected: entityValidation.destination_names
@@ -875,6 +974,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
       detected_customer_or_producer_names: entityValidation.producer_names,
       detected_carrier_or_supplier_names: entityValidation.carrier_names,
       detected_destination_or_facility_names: entityValidation.destination_names,
+      unclear_entity_names: entityValidation.unclear_entity_names,
       unmatched_business_names: entityValidation.unmatched_producer_names
     },
     overall_assessment: assessment,

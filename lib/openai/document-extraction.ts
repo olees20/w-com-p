@@ -27,6 +27,22 @@ export type StructuredExtraction = {
   destination_name?: string | null;
   destination_address?: string | null;
   facility?: string | null;
+  producer_name?: string | null;
+  customer_name?: string | null;
+  client_name?: string | null;
+  current_holder?: string | null;
+  transferor?: string | null;
+  site_name?: string | null;
+  carrier_name?: string | null;
+  waste_carrier?: string | null;
+  registered_carrier?: string | null;
+  collector?: string | null;
+  transporter?: string | null;
+  transferee?: string | null;
+  collected_by?: string | null;
+  business_taking_waste?: string | null;
+  carrier_licence_number?: string | null;
+  registration_number?: string | null;
 };
 
 const extractionSchema = {
@@ -53,7 +69,23 @@ const extractionSchema = {
     treatment_facility: { type: ["string", "null"] },
     destination_name: { type: ["string", "null"] },
     destination_address: { type: ["string", "null"] },
-    facility: { type: ["string", "null"] }
+    facility: { type: ["string", "null"] },
+    producer_name: { type: ["string", "null"] },
+    customer_name: { type: ["string", "null"] },
+    client_name: { type: ["string", "null"] },
+    current_holder: { type: ["string", "null"] },
+    transferor: { type: ["string", "null"] },
+    site_name: { type: ["string", "null"] },
+    carrier_name: { type: ["string", "null"] },
+    waste_carrier: { type: ["string", "null"] },
+    registered_carrier: { type: ["string", "null"] },
+    collector: { type: ["string", "null"] },
+    transporter: { type: ["string", "null"] },
+    transferee: { type: ["string", "null"] },
+    collected_by: { type: ["string", "null"] },
+    business_taking_waste: { type: ["string", "null"] },
+    carrier_licence_number: { type: ["string", "null"] },
+    registration_number: { type: ["string", "null"] }
   },
   required: [
     "document_type",
@@ -73,7 +105,23 @@ const extractionSchema = {
     "treatment_facility",
     "destination_name",
     "destination_address",
-    "facility"
+    "facility",
+    "producer_name",
+    "customer_name",
+    "client_name",
+    "current_holder",
+    "transferor",
+    "site_name",
+    "carrier_name",
+    "waste_carrier",
+    "registered_carrier",
+    "collector",
+    "transporter",
+    "transferee",
+    "collected_by",
+    "business_taking_waste",
+    "carrier_licence_number",
+    "registration_number"
   ]
 } as const;
 
@@ -144,6 +192,30 @@ function validateStructuredExtraction(data: unknown): StructuredExtraction {
       throw new Error(`Invalid ${field}.`);
     }
   }
+  const optionalRoleFields = [
+    "producer_name",
+    "customer_name",
+    "client_name",
+    "current_holder",
+    "transferor",
+    "site_name",
+    "carrier_name",
+    "waste_carrier",
+    "registered_carrier",
+    "collector",
+    "transporter",
+    "transferee",
+    "collected_by",
+    "business_taking_waste",
+    "carrier_licence_number",
+    "registration_number"
+  ] as const;
+  for (const field of optionalRoleFields) {
+    const fieldValue = value[field];
+    if (fieldValue !== undefined && fieldValue !== null && typeof fieldValue !== "string") {
+      throw new Error(`Invalid ${field}.`);
+    }
+  }
   if (!Array.isArray(value.missing_fields) || value.missing_fields.some((m) => typeof m !== "string")) {
     throw new Error("Invalid missing_fields.");
   }
@@ -202,7 +274,13 @@ File name: ${params.fileName}
 Extracted text snippet:
 ${extractedTextSnippet}
 
-For waste transfer notes, extract destination evidence into any relevant destination field when present, including labels like Destination, Disposal site, Receiving facility, or Treatment facility.`
+Role mapping is mandatory:
+- Producer/customer/current holder/transferor/site business labels (including "From", "Collected from", "Current holder", "Transferor") must map to producer/customer fields, not carrier fields.
+- Carrier/transferee/collector/transporter/registered carrier labels (including "Carrier", "Waste carrier", "Collected by", "Transferee") must map to carrier fields.
+- Destination/facility labels (Destination, Disposal site, Receiving facility, Treatment facility, Transfer station, Waste facility) must map to destination fields.
+- Licence labels (Licence, Carrier licence, Registration number, Waste carrier registration) must map to carrier_licence_number or registration_number.
+
+Important: do not infer the first business name on a WTN is the carrier when an explicit carrier label is present.`
             },
             {
               type: "input_file",

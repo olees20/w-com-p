@@ -1,5 +1,5 @@
 import type { ReportDocument, ReportAlert } from "@/lib/health-check-report";
-import { carrierRoleNames } from "@/lib/entity-pack-validation";
+import { carrierRoleNames, producerRoleNames } from "@/lib/entity-pack-validation";
 
 type BusinessInfo = {
   produces_food_waste: boolean | null;
@@ -133,6 +133,36 @@ export function runCrossDocumentReasoning(params: {
         "Confirm which carrier handled each waste transfer and upload matching WTN, invoice, licence and contract evidence.",
       points: sameDateConflict ? 12 : 6,
       affects_confidence: true
+    });
+  }
+
+  const unclearEntityEvidence = processedDocs
+    .filter((d) => ["waste_transfer_note", "invoice", "contract"].includes(d.document_type ?? ""))
+    .flatMap((d) => {
+      const payload = (d.ai_extracted_json ?? {}) as Record<string, unknown>;
+      const explicitCarriers = carrierRoleNames(payload, d.document_type, null);
+      const producers = producerRoleNames(payload);
+      const hasAmbiguousBusiness =
+        typeof payload.business_name === "string" ||
+        typeof payload.company_name === "string" ||
+        typeof payload.entity_name === "string";
+      if (explicitCarriers.length === 0 && (producers.length > 0 || hasAmbiguousBusiness)) {
+        return [`${d.file_name} -> unclear carrier/supplier role`];
+      }
+      return [];
+    });
+  if (unclearEntityEvidence.length) {
+    findings.push({
+      key: "unclear_entities",
+      title: "Some entity roles were unclear",
+      severity: "low",
+      status: "attention_needed",
+      message: "Some documents did not provide clear role labels to separate customer/producer from carrier/supplier.",
+      evidence: unclearEntityEvidence.slice(0, 10),
+      recommended_action: "Where possible, upload clearer copies showing labelled producer, carrier, and destination fields.",
+      points: 0,
+      affects_confidence: true,
+      cannot_verify: "Some entity roles were unclear in uploaded documents."
     });
   }
 
