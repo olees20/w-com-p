@@ -751,7 +751,15 @@ export function assessConfidenceForTest(params: {
   return confidenceFromSignals(params);
 }
 
-function verdict(confidence: HealthCheckReport["confidence"], scoreStatus: HealthCheckReport["score"]["status"], missingCount: number) {
+function verdict(
+  confidence: HealthCheckReport["confidence"],
+  scoreStatus: HealthCheckReport["score"]["status"],
+  missingCount: number,
+  incompleteEvidence: boolean
+) {
+  if (incompleteEvidence) {
+    return "Core evidence is present, but some required documents are missing. Without these, compliance cannot be fully demonstrated.";
+  }
   if (confidence.startsWith("Low")) {
     return "We could not fully verify compliance from the documents provided.";
   }
@@ -779,8 +787,10 @@ function overallAssessment(params: {
   confidence: HealthCheckReport["confidence"];
   entityMismatchFail: boolean;
   crossConflicts: number;
+  incompleteEvidence: boolean;
 }) {
   if (params.entityMismatchFail) return "Documents appear to belong to multiple businesses";
+  if (params.incompleteEvidence) return "Evidence pack incomplete";
   const highOrMediumRisks = params.risks.filter((risk) => risk.severity === "high" || risk.severity === "medium").length;
   const passRate = params.checks.length ? params.checks.filter((c) => c.result === "pass").length / params.checks.length : 0;
   const extractionCompleteness = computeRelevantExtractionCompleteness(params.docs);
@@ -802,6 +812,64 @@ function overallAssessment(params: {
   if (params.crossConflicts > 0) return "Evidence pack needs review";
   if (params.score >= 70 || passRate >= 0.75) return "Evidence pack needs review";
   return "Evidence pack cannot be reliably assessed";
+}
+
+function isIncompleteEvidencePack(params: {
+  checks: BaselineCheck[];
+  docs: ReportDocument[];
+  crossConflicts: number;
+  entityMismatchFail: boolean;
+}) {
+  const { checks, docs, crossConflicts, entityMismatchFail } = params;
+  if (entityMismatchFail) return false;
+
+  const checkByName = (name: string) => checks.find((c) => c.check_name === name);
+  const criticalMissing = ["Waste Transfer Note present", "Carrier licence evidence present"].some(
+    (name) => checkByName(name)?.result === "fail"
+  );
+  if (!criticalMissing) return false;
+
+  const failedImportant = docs.filter(
+    (d) =>
+      d.processing_status === "failed" &&
+      ["waste_transfer_note", "carrier_licence", "invoice", "contract", "hazardous_waste_note"].includes(d.document_type ?? "unknown")
+  ).length;
+  if (failedImportant > 0) return false;
+  if (crossConflicts > 0) return false;
+
+  const extractionCompleteness = computeRelevantExtractionCompleteness(docs);
+  return extractionCompleteness >= 0.6;
+}
+
+export function isIncompleteEvidencePackForTest(params: {
+  checks: BaselineCheck[];
+  docs: ReportDocument[];
+  crossConflicts: number;
+  entityMismatchFail: boolean;
+}) {
+  return isIncompleteEvidencePack(params);
+}
+
+export function overallAssessmentForTest(params: {
+  score: number;
+  checks: BaselineCheck[];
+  risks: ReportAlert[];
+  docs: ReportDocument[];
+  confidence: HealthCheckReport["confidence"];
+  entityMismatchFail: boolean;
+  crossConflicts: number;
+  incompleteEvidence: boolean;
+}) {
+  return overallAssessment(params);
+}
+
+export function verdictForTest(
+  confidence: HealthCheckReport["confidence"],
+  scoreStatus: HealthCheckReport["score"]["status"],
+  missingCount: number,
+  incompleteEvidence: boolean
+) {
+  return verdict(confidence, scoreStatus, missingCount, incompleteEvidence);
 }
 
 function mixedBusinessPrimaryActions() {
@@ -1030,6 +1098,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     }
   });
   const mixedBusinessHighRisk = entityValidation.finding?.status === "fail";
+  const wtnMissing = checks.find((c) => c.check_name === "Waste Transfer Note present")?.result === "fail";
   const missingDocs: string[] = [];
   if (checks.find((c) => c.check_name === "Waste Transfer Note present")?.result === "fail") missingDocs.push("Waste transfer note");
   if (checks.find((c) => c.check_name === "Carrier licence evidence present")?.result === "fail") missingDocs.push("Carrier licence evidence");
@@ -1063,6 +1132,10 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     cannotVerify.add("The uploaded pack appears to mix multiple business entities, so a single-business assessment is unreliable.");
   }
   cross.cannot_verify_items.forEach((item) => cannotVerify.add(item));
+  if (wtnMissing) {
+    cannotVerify.delete("Waste destination present on WTN where available: cannot verify with current evidence.");
+    cannotVerify.delete("EWC code present on WTN where available: cannot verify with current evidence.");
+  }
 
   const recommendedActions = Array.from(
     new Map(
@@ -1092,9 +1165,13 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   const businessActionsOnly = recommendedActions.filter(
     (action) => !/missing_fields|ewc_code_or_licence_number|document_type|no action required|no immediate action/i.test(action.toLowerCase())
   );
+  const refinedBusinessActions = wtnMissing
+    ? businessActionsOnly.filter((action) => /waste transfer note/i.test(action))
+    : businessActionsOnly;
+  const uniqueRefinedActions = Array.from(new Set(refinedBusinessActions));
   const finalActions = mixedBusinessHighRisk
     ? mixedBusinessPrimaryActions()
-    : businessActionsOnly;
+    : uniqueRefinedActions;
 
   const baseScore = scoreFromChecks({ checks, docs, business });
   const mergedBreakdown = mergeDeductions(
@@ -1111,6 +1188,13 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     status: mergedScore >= 80 ? "compliant" : mergedScore >= 50 ? "attention_needed" : "at_risk",
     breakdown: mergedBreakdown
   } as const;
+  const crossConflicts = cross.consistency_findings.filter((f) => f.status === "fail" || f.status === "attention_needed").length;
+  const incompleteEvidence = isIncompleteEvidencePack({
+    checks,
+    docs,
+    crossConflicts,
+    entityMismatchFail: entityValidation.finding?.status === "fail"
+  });
   const extractionCompleteness = computeRelevantExtractionCompleteness(docs);
   const confidence = confidenceFromSignals({
     checks,
@@ -1120,7 +1204,11 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     cannotVerifyCount: cannotVerify.size + cross.confidence_adjustments.length,
     crossFindings: cross.consistency_findings
   });
-  const finalConfidence = mixedBusinessHighRisk ? "Low Confidence / Cannot Fully Verify" : confidence;
+  const finalConfidence = mixedBusinessHighRisk
+    ? "Low Confidence / Cannot Fully Verify"
+    : incompleteEvidence
+      ? "Medium Confidence"
+      : confidence;
 
   const confidenceContributors = [
     `Baseline evidence checks: ${checks.filter((c) => c.result === "pass").length}/${checks.length} passed`,
@@ -1162,7 +1250,6 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   const informationalFindings = cross.consistency_findings.filter((f) =>
     ["duplicate_documents", "irrelevant_documents", "historic_expired_licence_uploaded"].includes(f.key)
   );
-  const crossConflicts = cross.consistency_findings.filter((f) => f.status === "fail" || f.status === "attention_needed").length;
   const assessment = overallAssessment({
     score: score.score,
     checks,
@@ -1170,7 +1257,8 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     docs,
     confidence: finalConfidence,
     entityMismatchFail: entityValidation.finding?.status === "fail",
-    crossConflicts
+    crossConflicts,
+    incompleteEvidence
   });
   const statusReasons = [
     `Baseline evidence checks: ${checks.filter((c) => c.result === "pass").length}/${checks.length} passed`,
@@ -1203,7 +1291,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     plain_english_verdict:
       mixedBusinessHighRisk
         ? verdictForMixedBusinessPack()
-        : verdict(finalConfidence, score.status, missingDocs.length),
+        : verdict(finalConfidence, score.status, missingDocs.length, incompleteEvidence),
     top_risks: businessRisks.filter(isBusinessRelevantRisk).slice(0, mixedBusinessHighRisk ? 4 : 5),
     missing_documents: missingDocs,
     compliance_checks: checks,
