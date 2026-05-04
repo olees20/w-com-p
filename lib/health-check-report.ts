@@ -209,6 +209,22 @@ function getContractStartOrStatus(doc: ReportDocument) {
   return getJsonText(payload, ["start_date", "contract_start_date", "contract_status", "status"]);
 }
 
+function isDraftOrUnsignedContract(doc: ReportDocument) {
+  const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
+  const text = `${doc.ai_summary ?? ""} ${JSON.stringify(payload)}`.toLowerCase();
+  return /draft|unsigned|not signed|missing signature/.test(text);
+}
+
+function isLowQualityReadable(doc: ReportDocument) {
+  const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
+  const qualityText = `${doc.ai_summary ?? ""} ${doc.processing_error ?? ""} ${JSON.stringify(payload)}`.toLowerCase();
+  const lowQuality = /low quality|faint|blurry|poor scan|hard to read|unreadable parts/.test(qualityText);
+  if (!lowQuality) return false;
+  if (doc.document_type !== "waste_transfer_note") return false;
+  const required = [doc.extracted_date, getCarrierNameFromDoc(doc), getCarrierLicenceFromDoc(doc), getDestinationName(doc)];
+  return required.every((v) => hasText(v ?? null));
+}
+
 function computeDocumentCompleteness(doc: ReportDocument) {
   const docType = doc.document_type ?? "unknown";
   if (!(doc.processing_status === "processed" || doc.processing_status === "review")) {
@@ -456,6 +472,8 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
   const carrierResolution = getCarrierResolution(processed);
   const invoiceDocs = processed.filter((d) => d.document_type === "invoice");
   const contractDocs = processed.filter((d) => d.document_type === "contract");
+  const strongContractDocs = contractDocs.filter((d) => !isDraftOrUnsignedContract(d));
+  const draftOrUnsignedContractDocs = contractDocs.filter((d) => isDraftOrUnsignedContract(d));
   const supplierRelationshipEvidence = [...invoiceDocs, ...wtDocs].filter((d) => hasText(getCarrierNameFromDoc(d)));
   const hasSupplierRelationshipEvidence = supplierRelationshipEvidence.length > 0;
   const hazDocs = processed.filter((d) => d.document_type === "hazardous_waste_note");
@@ -535,12 +553,14 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
 
   checks.push({
     check_name: "Supplier/contract evidence present",
-    result: contractDocs.length ? "pass" : hasSupplierRelationshipEvidence ? "attention_needed" : docs.length ? "attention_needed" : "cannot_verify",
-    evidence_used: contractDocs.length
-      ? contractDocs.map((d) => d.file_name)
+    result: strongContractDocs.length || hasSupplierRelationshipEvidence ? "pass" : draftOrUnsignedContractDocs.length ? "attention_needed" : docs.length ? "attention_needed" : "cannot_verify",
+    evidence_used: strongContractDocs.length
+      ? strongContractDocs.map((d) => d.file_name)
+      : draftOrUnsignedContractDocs.length
+        ? draftOrUnsignedContractDocs.map((d) => `${d.file_name} (draft/unsigned)`)
       : supplierRelationshipEvidence.map((d) => `${d.file_name} (${getCarrierNameFromDoc(d) ?? "supplier"})`),
-    affected_document: contractDocs[0]?.file_name ?? null,
-    recommended_action: contractDocs.length || hasSupplierRelationshipEvidence ? "No immediate action." : "Upload supplier contract evidence.",
+    affected_document: strongContractDocs[0]?.file_name ?? draftOrUnsignedContractDocs[0]?.file_name ?? null,
+    recommended_action: strongContractDocs.length || hasSupplierRelationshipEvidence ? "No immediate action." : "Upload supplier contract evidence.",
     source_reference: resolveSourceReference(
       "Supplier/contract evidence present",
       findReference(rules, sources, ["waste duty of care gov.uk", "dispose business commercial waste"])
@@ -741,6 +761,7 @@ function confidenceFromSignals(params: {
   const hasLicenceMismatch = crossFindings.some((f) => f.key === "licence_mismatch");
   const hasFutureDatedKey = crossFindings.some((f) => f.key === "future_dated_documents");
   const hasStaleWtn = crossFindings.some((f) => f.key === "stale_wtn");
+  const lowQualityReadableCount = docs.filter((d) => isLowQualityReadable(d)).length;
   const majorCrossConflictCount = crossFindings.filter((f) => f.status === "fail").length;
   const sourceCoverage = checks.length
     ? checks.filter((c) => !c.source_reference.startsWith("No source reference available")).length / checks.length
@@ -778,6 +799,9 @@ function confidenceFromSignals(params: {
   }
 
   if (hasMajorCarrierConflict || hasLicenceMismatch || hasFutureDatedKey || hasStaleWtn || irrelevantRatio > 0.25 || duplicateRatio > 0.4) {
+    level = Math.max(1, level - 1) as 1 | 2 | 3;
+  }
+  if (lowQualityReadableCount > 0) {
     level = Math.max(1, level - 1) as 1 | 2 | 3;
   }
 
@@ -863,6 +887,13 @@ function overallAssessment(params: {
     coreFailures === 0
   ) {
     return "Evidence pack appears usable";
+  }
+  const coreEvidencePresent =
+    params.checks.find((c) => c.check_name === "Waste Transfer Note present")?.result === "pass" &&
+    params.checks.find((c) => c.check_name === "Carrier licence evidence present")?.result === "pass" &&
+    params.checks.find((c) => c.check_name === "Waste invoice or collection evidence present")?.result === "pass";
+  if (coreEvidencePresent && params.crossConflicts === 0 && highOrMediumRisks <= 1) {
+    return "Evidence pack usable (minor issues identified)";
   }
   if (params.confidence.startsWith("Low")) return "Evidence pack cannot be reliably assessed";
   if (params.crossConflicts > 0) return "Evidence pack needs review";

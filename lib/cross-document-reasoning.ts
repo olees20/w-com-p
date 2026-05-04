@@ -308,8 +308,13 @@ export function runCrossDocumentReasoning(params: {
     });
   }
 
-  const staleWtn = processedDocs.filter((d) => d.document_type === "waste_transfer_note" && parseDate(d.extracted_date) && now.getTime() - (parseDate(d.extracted_date) as Date).getTime() > 365 * 24 * 60 * 60 * 1000);
-  if (staleWtn.length) {
+  const wtnDated = processedDocs
+    .filter((d) => d.document_type === "waste_transfer_note")
+    .map((d) => ({ doc: d, date: parseDate(d.extracted_date) }))
+    .filter((x): x is { doc: ReportDocument; date: Date } => Boolean(x.date));
+  const staleWtn = wtnDated.filter((x) => now.getTime() - x.date.getTime() > 365 * 24 * 60 * 60 * 1000).map((x) => x.doc);
+  const recentWtnExists = wtnDated.some((x) => now.getTime() - x.date.getTime() <= 365 * 24 * 60 * 60 * 1000);
+  if (staleWtn.length && !recentWtnExists) {
     findings.push({
       key: "stale_wtn",
       title: "WTN evidence appears stale",
