@@ -1002,6 +1002,47 @@ function isBusinessRelevantRisk(alert: ReportAlert) {
   return patterns.some((p) => text.includes(p));
 }
 
+function severityRank(severity: ReportAlert["severity"]) {
+  if (severity === "high") return 3;
+  if (severity === "medium") return 2;
+  if (severity === "low") return 1;
+  return 0;
+}
+
+function normalizedRiskKey(risk: ReportAlert) {
+  const rule = (risk.rule_id ?? "").toLowerCase();
+  const text = `${risk.title} ${risk.description ?? ""}`.toLowerCase();
+  if (rule === "food_waste_missing" || rule === "food_waste_evidence_missing" || text.includes("food waste documentation missing")) {
+    return "food_waste_evidence_missing";
+  }
+  return rule || risk.title.toLowerCase().trim();
+}
+
+function dedupeRisks(risks: ReportAlert[]) {
+  const byKey = new Map<string, ReportAlert>();
+  for (const risk of risks) {
+    const key = normalizedRiskKey(risk);
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, { ...risk, rule_id: key === "food_waste_evidence_missing" ? key : risk.rule_id });
+      continue;
+    }
+    const keepIncoming = severityRank(risk.severity) > severityRank(existing.severity);
+    const base = keepIncoming ? risk : existing;
+    const other = keepIncoming ? existing : risk;
+    byKey.set(key, {
+      ...base,
+      rule_id: key === "food_waste_evidence_missing" ? key : base.rule_id,
+      description: base.description ?? other.description ?? null
+    });
+  }
+  return Array.from(byKey.values());
+}
+
+export function dedupeRisksForTest(risks: ReportAlert[]) {
+  return dedupeRisks(risks);
+}
+
 function looksLikeHazardousEvidence(doc: ReportDocument) {
   const text = `${doc.file_name} ${doc.document_type ?? ""} ${doc.ai_summary ?? ""}`.toLowerCase();
   return /hazard|consignment|hwcn|ewc|dangerous waste/i.test(text);
@@ -1169,6 +1210,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   if (checks.find((c) => c.check_name === "Supplier/contract evidence present")?.result !== "pass") missingDocs.push("Supplier/contract evidence");
   if (business.produces_food_waste && checks.find((c) => c.check_name === "Food waste evidence present")?.result !== "pass") missingDocs.push("Food waste documentation");
   if (business.produces_hazardous_waste && checks.find((c) => c.check_name === "Hazardous waste consignment note present")?.result !== "pass") missingDocs.push("Hazardous waste consignment note");
+  const dedupedMissingDocs = Array.from(new Set(missingDocs));
 
   const notUsedDocs = classifyNotUsedDocuments(docs, business);
   const cannotVerify = new Set<string>();
@@ -1275,7 +1317,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     checks,
     docs,
     alerts: [...openAlerts, ...cross.business_level_risks],
-    missingDocs,
+    missingDocs: dedupedMissingDocs,
     cannotVerifyCount: cannotVerify.size + cross.confidence_adjustments.length,
     crossFindings: nonMaintenanceConsistencyFindings
   });
@@ -1342,6 +1384,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
       document_id: null
     });
   }
+  businessRisks = dedupeRisks(businessRisks);
   const hasOnlyExpiredNowMaintenanceIssue =
     score.score >= 90 &&
     score.status === "compliant" &&
@@ -1432,9 +1475,9 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
         ? verdictForMixedBusinessPack()
         : pack04StyleFoodWasteIncomplete
           ? "Core waste evidence is present and internally consistent, but food waste evidence was expected based on the business profile and was not found. Upload food waste collection evidence or contract documentation before relying on this pack."
-          : verdict(finalConfidence, score.status, missingDocs.length, incompleteEvidence, hasOnlyExpiredNowMaintenanceIssue),
+          : verdict(finalConfidence, score.status, dedupedMissingDocs.length, incompleteEvidence, hasOnlyExpiredNowMaintenanceIssue),
     top_risks: businessRisks.filter(isBusinessRelevantRisk).slice(0, mixedBusinessHighRisk ? 4 : 5),
-    missing_documents: missingDocs,
+    missing_documents: dedupedMissingDocs,
     compliance_checks: checks,
     documents: docs,
     references: refs,
