@@ -126,6 +126,38 @@ function hasText(v: string | null | undefined) {
   return Boolean(v && v.trim().length > 0);
 }
 
+function getCarrierNameFromDoc(doc: ReportDocument) {
+  const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
+  const candidates = [
+    doc.extracted_supplier,
+    payload.carrier_name,
+    payload.waste_carrier,
+    payload.registered_carrier,
+    payload.collector,
+    payload.transporter,
+    payload.transferee,
+    payload.business_taking_waste,
+    payload.supplier
+  ];
+  for (const value of candidates) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function getCarrierLicenceFromDoc(doc: ReportDocument) {
+  const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
+  const candidates = [doc.extracted_licence_number, payload.licence_number, payload.carrier_licence_number, payload.registration_number];
+  for (const value of candidates) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function hasValidCarrierLicenceFields(doc: ReportDocument) {
+  return hasText(getCarrierNameFromDoc(doc)) && hasText(getCarrierLicenceFromDoc(doc)) && hasText(doc.expiry_date);
+}
+
 function lower(v: string | null | undefined) {
   return (v ?? "").toLowerCase();
 }
@@ -148,13 +180,13 @@ function hasActiveMarker(doc: ReportDocument) {
 }
 
 function getCarrierResolution(docs: ReportDocument[]) {
-  const carrierDocs = docs.filter((d) => d.document_type === "carrier_licence");
+  const carrierDocs = docs.filter(
+    (d) => d.document_type === "carrier_licence" && (d.processing_status === "processed" || d.processing_status === "review") && hasValidCarrierLicenceFields(d)
+  );
   const wtDocs = docs.filter((d) => d.document_type === "waste_transfer_note");
   const now = new Date();
 
-  const evidenceNumbers = new Set(
-    carrierDocs.map((d) => (d.extracted_licence_number ?? "").trim().toLowerCase()).filter(Boolean)
-  );
+  const evidenceNumbers = new Set(carrierDocs.map((d) => (getCarrierLicenceFromDoc(d) ?? "").trim().toLowerCase()).filter(Boolean));
 
   const hasAnyCarrierEvidence = carrierDocs.length > 0;
   const hasValidNow = carrierDocs.some((d) => {
@@ -180,7 +212,7 @@ function getCarrierResolution(docs: ReportDocument[]) {
     const key = (wtn.extracted_licence_number ?? "").trim().toLowerCase();
     if (!key) return false;
     return carrierDocs.some((lic) => {
-      const licKey = (lic.extracted_licence_number ?? "").trim().toLowerCase();
+      const licKey = (getCarrierLicenceFromDoc(lic) ?? "").trim().toLowerCase();
       const expiry = lic.expiry_date ? new Date(lic.expiry_date) : null;
       return licKey === key && expiry && !Number.isNaN(expiry.getTime()) && expiry >= now;
     });
@@ -191,7 +223,7 @@ function getCarrierResolution(docs: ReportDocument[]) {
     if (!wtnDate || Number.isNaN(wtnDate.getTime())) return false;
     const key = (wtn.extracted_licence_number ?? "").trim().toLowerCase();
     return carrierDocs.some((lic) => {
-      const licKey = (lic.extracted_licence_number ?? "").trim().toLowerCase();
+      const licKey = (getCarrierLicenceFromDoc(lic) ?? "").trim().toLowerCase();
       const expiry = lic.expiry_date ? new Date(lic.expiry_date) : null;
       return licKey === key && expiry && !Number.isNaN(expiry.getTime()) && expiry >= wtnDate && expiry < now;
     });
@@ -292,7 +324,9 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
 
   const processed = docs.filter(isProcessed);
   const wtDocs = processed.filter((d) => d.document_type === "waste_transfer_note");
-  const carrierDocs = processed.filter((d) => d.document_type === "carrier_licence");
+  const carrierDocs = docs.filter(
+    (d) => d.document_type === "carrier_licence" && (d.processing_status === "processed" || d.processing_status === "review") && hasValidCarrierLicenceFields(d)
+  );
   const carrierResolution = getCarrierResolution(processed);
   const invoiceDocs = processed.filter((d) => d.document_type === "invoice");
   const contractDocs = processed.filter((d) => d.document_type === "contract");

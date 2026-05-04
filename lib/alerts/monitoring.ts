@@ -21,7 +21,7 @@ type DocumentRow = {
   expiry_date: string | null;
   waste_type: string | null;
   ai_summary: string | null;
-  ai_extracted_json: { missing_fields?: string[] } | null;
+  ai_extracted_json: { missing_fields?: string[] } | Record<string, unknown> | null;
   created_at: string;
   processing_status: "uploaded" | "processing" | "processed" | "review" | "failed" | null;
 };
@@ -73,6 +73,39 @@ function hasText(value: string | null | undefined) {
   return Boolean(value && value.trim().length > 0);
 }
 
+function getCarrierName(document: DocumentRow) {
+  const payload = (document.ai_extracted_json ?? {}) as Record<string, unknown>;
+  const candidates = [
+    document.extracted_supplier,
+    payload.carrier_name,
+    payload.waste_carrier,
+    payload.registered_carrier,
+    payload.collector,
+    payload.transporter,
+    payload.transferee,
+    payload.business_taking_waste,
+    payload.supplier
+  ];
+  for (const value of candidates) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function getCarrierLicenceNumber(document: DocumentRow) {
+  const payload = (document.ai_extracted_json ?? {}) as Record<string, unknown>;
+  const candidates = [
+    document.extracted_licence_number,
+    payload.licence_number,
+    payload.carrier_licence_number,
+    payload.registration_number
+  ];
+  for (const value of candidates) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
 export function isValidWasteTransferNote(document: DocumentRow) {
   return (
     document.processing_status === "processed" &&
@@ -87,12 +120,12 @@ export function isValidWasteTransferNote(document: DocumentRow) {
 
 export function isValidCarrierLicence(document: DocumentRow) {
   return (
-    document.processing_status === "processed" &&
+    (document.processing_status === "processed" || document.processing_status === "review") &&
     document.document_type === "carrier_licence" &&
     document.ai_risk_level !== "high" &&
-    hasText(document.extracted_supplier) &&
+    hasText(getCarrierName(document)) &&
     hasText(document.expiry_date) &&
-    hasText(document.extracted_licence_number)
+    hasText(getCarrierLicenceNumber(document))
   );
 }
 
@@ -144,8 +177,8 @@ function buildAlertsForBusiness(business: BusinessRow, documents: DocumentRow[])
   }
 
   for (const doc of validCarrierLicences) {
-    const supplier = doc.extracted_supplier ?? "Carrier";
-    const licence = doc.extracted_licence_number ?? "unknown licence";
+    const supplier = getCarrierName(doc) ?? "Carrier";
+    const licence = getCarrierLicenceNumber(doc) ?? "unknown licence";
     const expiry = toDateOnly(doc.expiry_date) ?? "unknown date";
     if (isBeforeToday(doc.expiry_date)) {
       alerts.push({
@@ -171,7 +204,13 @@ function buildAlertsForBusiness(business: BusinessRow, documents: DocumentRow[])
   }
 
   for (const doc of documents.filter((d) => d.processing_status === "review")) {
-    const missing = doc.ai_extracted_json?.missing_fields?.length ? doc.ai_extracted_json.missing_fields.join(", ") : "required fields";
+    if (doc.document_type === "carrier_licence" && isValidCarrierLicence(doc)) {
+      continue;
+    }
+    const missingFields = Array.isArray((doc.ai_extracted_json as { missing_fields?: unknown } | null)?.missing_fields)
+      ? ((doc.ai_extracted_json as { missing_fields?: unknown[] }).missing_fields as unknown[])
+      : [];
+    const missing = missingFields.length ? missingFields.map((value) => String(value)).join(", ") : "required fields";
     alerts.push({
       rule_id: "document_field_completeness",
       rule_key: "document_requires_review",

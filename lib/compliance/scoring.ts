@@ -16,6 +16,7 @@ export type DocumentForScore = {
   ai_risk_level: "low" | "medium" | "high" | null;
   waste_type: string | null;
   ai_summary: string | null;
+  ai_extracted_json?: { missing_fields?: string[] } | Record<string, unknown> | null;
   processing_status: "uploaded" | "processing" | "processed" | "review" | "failed" | null;
 };
 
@@ -57,6 +58,34 @@ function hasText(value: string | null | undefined) {
   return Boolean(value && value.trim().length > 0);
 }
 
+function getCarrierName(doc: DocumentForScore) {
+  const payload = (doc as unknown as { ai_extracted_json?: Record<string, unknown> }).ai_extracted_json ?? {};
+  const candidates = [
+    doc.extracted_supplier,
+    payload.carrier_name,
+    payload.waste_carrier,
+    payload.registered_carrier,
+    payload.collector,
+    payload.transporter,
+    payload.transferee,
+    payload.business_taking_waste,
+    payload.supplier
+  ];
+  for (const value of candidates) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function getCarrierLicenceNumber(doc: DocumentForScore) {
+  const payload = (doc as unknown as { ai_extracted_json?: Record<string, unknown> }).ai_extracted_json ?? {};
+  const candidates = [doc.extracted_licence_number, payload.licence_number, payload.carrier_licence_number, payload.registration_number];
+  for (const value of candidates) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
 function isWithinDays(value: string | null, days: number) {
   if (!value) return false;
   const date = new Date(value);
@@ -81,12 +110,12 @@ function isValidWasteTransferNote(doc: DocumentForScore) {
 
 function isValidCarrierLicence(doc: DocumentForScore) {
   return (
-    doc.processing_status === "processed" &&
+    (doc.processing_status === "processed" || doc.processing_status === "review") &&
     doc.document_type === "carrier_licence" &&
     doc.ai_risk_level !== "high" &&
-    hasText(doc.extracted_supplier) &&
+    hasText(getCarrierName(doc)) &&
     hasText(doc.expiry_date) &&
-    hasText(doc.extracted_licence_number)
+    hasText(getCarrierLicenceNumber(doc))
   );
 }
 

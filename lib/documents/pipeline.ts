@@ -268,29 +268,44 @@ export function validateExtractedDocument(aiResult: StructuredExtraction): Valid
   const requireField = (value: string | null, label: string) => {
     if (!value || value.trim().length === 0) missing.push(label);
   };
+  const roleCarrierName = pickFirstText([
+    aiResult.supplier,
+    aiResult.carrier_name,
+    aiResult.waste_carrier,
+    aiResult.registered_carrier,
+    aiResult.collector,
+    aiResult.transporter,
+    aiResult.transferee,
+    aiResult.business_taking_waste
+  ]);
+  const roleLicenceNumber = pickFirstText([
+    aiResult.licence_number,
+    aiResult.carrier_licence_number,
+    aiResult.registration_number
+  ]);
 
   if (aiResult.document_type === "waste_transfer_note") {
-    requireField(aiResult.supplier, "supplier");
+    requireField(roleCarrierName, "supplier");
     requireField(aiResult.document_date, "document_date");
     requireField(aiResult.waste_type, "waste_type");
-    if (!aiResult.ewc_code && !aiResult.licence_number) {
+    if (!aiResult.ewc_code && !roleLicenceNumber) {
       missing.push("ewc_code_or_licence_number");
     }
   } else if (aiResult.document_type === "carrier_licence") {
-    requireField(aiResult.supplier, "supplier");
+    requireField(roleCarrierName, "supplier");
     requireField(aiResult.expiry_date, "expiry_date");
-    requireField(aiResult.licence_number, "licence_number");
+    requireField(roleLicenceNumber, "licence_number");
   } else if (aiResult.document_type === "invoice") {
-    requireField(aiResult.supplier, "supplier");
+    requireField(roleCarrierName, "supplier");
     requireField(aiResult.document_date, "document_date");
   } else if (aiResult.document_type === "recycling_report") {
-    if (!aiResult.supplier && !aiResult.document_date) {
+    if (!roleCarrierName && !aiResult.document_date) {
       missing.push("supplier_or_document_date");
     }
   } else if (aiResult.document_type === "contract") {
-    requireField(aiResult.supplier, "supplier");
+    requireField(roleCarrierName, "supplier");
   } else if (aiResult.document_type === "hazardous_waste_note") {
-    requireField(aiResult.supplier, "supplier");
+    requireField(roleCarrierName, "supplier");
     requireField(aiResult.document_date, "document_date");
     requireField(aiResult.waste_type, "waste_type");
     requireField(aiResult.ewc_code, "ewc_code");
@@ -382,6 +397,7 @@ export async function recalculateComplianceScore(businessId: string) {
       ai_risk_level: "low" | "medium" | "high" | null;
       waste_type: string | null;
       ai_summary: string | null;
+      ai_extracted_json: { missing_fields?: string[] } | Record<string, unknown> | null;
       processing_status: "uploaded" | "processing" | "processed" | "review" | "failed" | null;
     }>,
     openAlerts: (alerts ?? []) as Array<{ severity: "low" | "medium" | "high" | null; status: string | null }>

@@ -64,6 +64,15 @@ function parseDate(v: string | null) {
   return d;
 }
 
+function getCarrierLicenceNumber(doc: ReportDocument) {
+  const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
+  const candidates = [doc.extracted_licence_number, payload.licence_number, payload.carrier_licence_number, payload.registration_number];
+  for (const value of candidates) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
 function isComplianceDoc(doc: ReportDocument) {
   return ["waste_transfer_note", "invoice", "carrier_licence", "contract", "hazardous_waste_note", "recycling_report"].includes(doc.document_type ?? "");
 }
@@ -168,14 +177,14 @@ export function runCrossDocumentReasoning(params: {
     });
   }
 
-  const wtnLicenceDocs = processedDocs.filter((d) => d.document_type === "waste_transfer_note" && (d.extracted_licence_number ?? "").trim());
+  const wtnLicenceDocs = processedDocs.filter((d) => d.document_type === "waste_transfer_note" && (getCarrierLicenceNumber(d) ?? "").trim());
   const licenceEvidence = new Set(
     processedDocs
-      .filter((d) => d.document_type === "carrier_licence" && (d.extracted_licence_number ?? "").trim())
-      .map((d) => (d.extracted_licence_number ?? "").trim().toLowerCase())
+      .filter((d) => d.document_type === "carrier_licence" && (getCarrierLicenceNumber(d) ?? "").trim())
+      .map((d) => (getCarrierLicenceNumber(d) ?? "").trim().toLowerCase())
   );
 
-  const mismatchedLicences = wtnLicenceDocs.filter((d) => !licenceEvidence.has((d.extracted_licence_number ?? "").trim().toLowerCase()));
+  const mismatchedLicences = wtnLicenceDocs.filter((d) => !licenceEvidence.has((getCarrierLicenceNumber(d) ?? "").trim().toLowerCase()));
   if (mismatchedLicences.length) {
     findings.push({
       key: "licence_mismatch",
@@ -183,7 +192,7 @@ export function runCrossDocumentReasoning(params: {
       severity: "medium",
       status: "attention_needed",
       message: "A licence number on one or more WTNs could not be matched to uploaded carrier licence evidence.",
-      evidence: mismatchedLicences.map((d) => `${d.file_name} -> ${(d.extracted_licence_number ?? "Unknown").trim()}`),
+      evidence: mismatchedLicences.map((d) => `${d.file_name} -> ${(getCarrierLicenceNumber(d) ?? "Unknown").trim()}`),
       recommended_action: "Upload carrier licence evidence matching each WTN licence number.",
       points: 15,
       affects_confidence: true
@@ -245,7 +254,7 @@ export function runCrossDocumentReasoning(params: {
     const wtnDate = parseDate(wtn.extracted_date);
     if (!wtnDate) return false;
     const linked = carrierLicences.find(
-      (c) => (c.extracted_licence_number ?? "").trim().toLowerCase() === (wtn.extracted_licence_number ?? "").trim().toLowerCase()
+      (c) => (getCarrierLicenceNumber(c) ?? "").trim().toLowerCase() === (getCarrierLicenceNumber(wtn) ?? "").trim().toLowerCase()
     );
     if (!linked) return false;
     const exp = parseDate(linked.expiry_date);
@@ -269,7 +278,7 @@ export function runCrossDocumentReasoning(params: {
     const wtnDate = parseDate(wtn.extracted_date);
     if (!wtnDate) return false;
     const linked = carrierLicences.find(
-      (c) => (c.extracted_licence_number ?? "").trim().toLowerCase() === (wtn.extracted_licence_number ?? "").trim().toLowerCase()
+      (c) => (getCarrierLicenceNumber(c) ?? "").trim().toLowerCase() === (getCarrierLicenceNumber(wtn) ?? "").trim().toLowerCase()
     );
     if (!linked) return false;
     const exp = parseDate(linked.expiry_date);
