@@ -748,6 +748,7 @@ function scoreFromChecks(params: { checks: BaselineCheck[]; docs: ReportDocument
   const supplierEvidenceFromOps = processed
     .filter((d) => d.document_type === "waste_transfer_note" || d.document_type === "invoice")
     .filter((d) => hasText(getCarrierNameFromDoc(d)));
+  const irrelevantOnlyPack = docs.length > 0 && docs.every((d) => classifyDocumentAssessmentRole(d) === "IRRELEVANT_NOT_USED");
 
   if (byName("Waste Transfer Note present")?.result === "fail") deductions.push({ reason: "Missing waste transfer note", points: 35 });
   if (byName("Carrier licence valid / not expired")?.result === "fail") deductions.push({ reason: "Carrier licence not valid at transfer date", points: 28 });
@@ -760,6 +761,7 @@ function scoreFromChecks(params: { checks: BaselineCheck[]; docs: ReportDocument
   }
   if (byName("Waste destination present on WTN where available")?.result === "attention_needed") deductions.push({ reason: "Missing destination detail on WTN", points: 8 });
   if (byName("EWC code present on WTN where available")?.result === "attention_needed") deductions.push({ reason: "Missing EWC code on WTN", points: 8 });
+  if (irrelevantOnlyPack) deductions.push({ reason: "No relevant waste compliance evidence detected", points: 25 });
 
   const failedImportant = docs.filter((d) => d.processing_status === "failed" && ["waste_transfer_note", "carrier_licence", "invoice", "contract", "hazardous_waste_note"].includes(d.document_type ?? "unknown")).length;
   if (failedImportant > 0) deductions.push({ reason: `Failed important document processing (${failedImportant})`, points: failedImportant * 10 });

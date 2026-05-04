@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildChecksForTest, classifyNotUsedDocumentsForTest, type ReportDocument } from "@/lib/health-check-report";
+import { buildChecksForTest, classifyNotUsedDocumentsForTest, scoreFromChecksForTest, type ReportDocument } from "@/lib/health-check-report";
 
 const mkIrrelevant = (file_name: string, summary: string): ReportDocument => ({
   id: Math.random().toString(36),
@@ -40,9 +40,21 @@ test("all-irrelevant pack marks docs as not used and fails baseline evidence che
   assert.equal(byName("Waste Transfer Note present")?.result, "fail");
   assert.equal(byName("Carrier licence evidence present")?.result, "fail");
   assert.equal(byName("Waste invoice or collection evidence present")?.result, "fail");
+  const score = scoreFromChecksForTest({
+    checks,
+    docs,
+    business: {
+      id: "b1",
+      name: "Bean & Brew Cafe Ltd",
+      business_type: "Cafe",
+      sites_count: 1,
+      produces_food_waste: false,
+      produces_hazardous_waste: false
+    }
+  });
+  assert.ok(score.score <= 20);
 
   const notUsed = classifyNotUsedDocumentsForTest(docs, { produces_hazardous_waste: false });
   assert.equal(notUsed.length, 2);
   assert.ok(notUsed.every((d) => d.reason.toLowerCase().includes("unrelated")));
 });
-
