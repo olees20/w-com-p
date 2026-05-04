@@ -373,7 +373,8 @@ const CHECK_SOURCE_FALLBACKS: Record<string, string> = {
   "Carrier licence valid / not expired": "https://www.gov.uk/register-renew-waste-carrier-broker-dealer-england",
   "EWC code present on WTN where available": "https://www.gov.uk/dispose-business-commercial-waste/waste-transfer-notes",
   "Waste destination present on WTN where available": "https://www.gov.uk/government/publications/waste-duty-of-care-code-of-practice",
-  "Supplier/contract evidence present": "https://www.gov.uk/dispose-business-commercial-waste"
+  "Supplier/contract evidence present": "https://www.gov.uk/dispose-business-commercial-waste",
+  "Food waste evidence present": "https://www.gov.uk/guidance/simpler-recycling-workplace-recycling-in-england"
 };
 
 function findReference(rules: RuleRef[], sources: SourceRef[], terms: string[]) {
@@ -455,6 +456,8 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
   const carrierResolution = getCarrierResolution(processed);
   const invoiceDocs = processed.filter((d) => d.document_type === "invoice");
   const contractDocs = processed.filter((d) => d.document_type === "contract");
+  const supplierRelationshipEvidence = [...invoiceDocs, ...wtDocs].filter((d) => hasText(getCarrierNameFromDoc(d)));
+  const hasSupplierRelationshipEvidence = supplierRelationshipEvidence.length > 0;
   const hazDocs = processed.filter((d) => d.document_type === "hazardous_waste_note");
   const failedDocs = docs.filter((d) => d.processing_status === "failed");
 
@@ -532,10 +535,12 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
 
   checks.push({
     check_name: "Supplier/contract evidence present",
-    result: contractDocs.length ? "pass" : docs.length ? "attention_needed" : "cannot_verify",
-    evidence_used: contractDocs.map((d) => d.file_name),
+    result: contractDocs.length ? "pass" : hasSupplierRelationshipEvidence ? "attention_needed" : docs.length ? "attention_needed" : "cannot_verify",
+    evidence_used: contractDocs.length
+      ? contractDocs.map((d) => d.file_name)
+      : supplierRelationshipEvidence.map((d) => `${d.file_name} (${getCarrierNameFromDoc(d) ?? "supplier"})`),
     affected_document: contractDocs[0]?.file_name ?? null,
-    recommended_action: contractDocs.length ? "No immediate action." : "Upload supplier contract evidence.",
+    recommended_action: contractDocs.length || hasSupplierRelationshipEvidence ? "No immediate action." : "Upload supplier contract evidence.",
     source_reference: resolveSourceReference(
       "Supplier/contract evidence present",
       findReference(rules, sources, ["waste duty of care gov.uk", "dispose business commercial waste"])
@@ -552,8 +557,7 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
       recommended_action: foodEvidence.length ? "No immediate action." : "Upload food waste collection evidence.",
       source_reference: resolveSourceReference(
         "Food waste evidence present",
-        findReference(rules, sources, ["food waste workplace recycling england gov.uk", "simpler recycling workplace recycling"]),
-        false
+        findReference(rules, sources, ["food waste workplace recycling england gov.uk", "simpler recycling workplace recycling"])
       )
     });
   }
@@ -654,14 +658,20 @@ function scoreFromChecks(params: { checks: BaselineCheck[]; docs: ReportDocument
   const deductions: Array<{ reason: string; points: number }> = [];
 
   const byName = (name: string) => checks.find((c) => c.check_name === name);
+  const processed = docs.filter(isProcessed);
+  const supplierEvidenceFromOps = processed
+    .filter((d) => d.document_type === "waste_transfer_note" || d.document_type === "invoice")
+    .filter((d) => hasText(getCarrierNameFromDoc(d)));
 
   if (byName("Waste Transfer Note present")?.result === "fail") deductions.push({ reason: "Missing waste transfer note", points: 35 });
   if (byName("Carrier licence valid / not expired")?.result === "fail") deductions.push({ reason: "Carrier licence not valid at transfer date", points: 28 });
   if (byName("Carrier licence valid / not expired")?.result === "attention_needed") deductions.push({ reason: "Carrier licence expired now (valid at transfer)", points: 8 });
   if (byName("Carrier licence evidence present")?.result === "fail") deductions.push({ reason: "Missing carrier licence evidence", points: 25 });
-  if (business.produces_food_waste && byName("Food waste evidence present")?.result === "fail") deductions.push({ reason: "Missing food waste evidence", points: 15 });
+  if (business.produces_food_waste && byName("Food waste evidence present")?.result === "fail") deductions.push({ reason: "Missing food waste evidence", points: 25 });
   if (business.produces_hazardous_waste && byName("Hazardous waste consignment note present")?.result === "fail") deductions.push({ reason: "Missing hazardous waste consignment note", points: 30 });
-  if (byName("Supplier/contract evidence present")?.result === "attention_needed") deductions.push({ reason: "Missing supplier contract evidence", points: 8 });
+  if (byName("Supplier/contract evidence present")?.result === "attention_needed" && supplierEvidenceFromOps.length === 0) {
+    deductions.push({ reason: "Missing supplier contract evidence", points: 8 });
+  }
   if (byName("Waste destination present on WTN where available")?.result === "attention_needed") deductions.push({ reason: "Missing destination detail on WTN", points: 8 });
   if (byName("EWC code present on WTN where available")?.result === "attention_needed") deductions.push({ reason: "Missing EWC code on WTN", points: 8 });
 
@@ -685,6 +695,10 @@ function scoreFromChecks(params: { checks: BaselineCheck[]; docs: ReportDocument
       final_score: score
     }
   } as const;
+}
+
+export function scoreFromChecksForTest(params: { checks: BaselineCheck[]; docs: ReportDocument[]; business: BusinessInfo }) {
+  return scoreFromChecks(params);
 }
 
 function mergeDeductions(
@@ -1221,8 +1235,11 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   const businessActionsOnly = recommendedActions.filter(
     (action) => !/missing_fields|ewc_code_or_licence_number|document_type|no action required|no immediate action/i.test(action.toLowerCase())
   );
+  const foodWasteMissing = business.produces_food_waste && checks.find((c) => c.check_name === "Food waste evidence present")?.result === "fail";
   const refinedBusinessActions = wtnMissing
     ? businessActionsOnly.filter((action) => /waste transfer note/i.test(action))
+    : foodWasteMissing
+      ? businessActionsOnly.filter((action) => /food waste/i.test(action) || /contract documentation/i.test(action))
     : businessActionsOnly;
   const uniqueRefinedActions = Array.from(new Set(refinedBusinessActions));
   const finalActions = mixedBusinessHighRisk
@@ -1300,6 +1317,17 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
       document_id: null
     });
   }
+  if (foodWasteMissing) {
+    businessRisks.unshift({
+      id: "food-waste-missing",
+      title: "Food waste documentation missing",
+      description: "Based on the business profile, food waste evidence was expected but not found in the uploaded documents.",
+      severity: "high",
+      status: "open",
+      rule_id: "food_waste_missing",
+      document_id: null
+    });
+  }
   if (mixedBusinessHighRisk) {
     businessRisks = applyMixedBusinessRiskOverride(businessRisks);
   }
@@ -1361,11 +1389,21 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     incompleteEvidence,
     maintenanceOnlyExpiredNow: hasOnlyExpiredNowMaintenanceIssue
   });
+  const pack04StyleFoodWasteIncomplete =
+    !mixedBusinessHighRisk &&
+    foodWasteMissing &&
+    !wtnMissing &&
+    checks.find((c) => c.check_name === "Carrier licence evidence present")?.result === "pass" &&
+    checks.find((c) => c.check_name === "Carrier licence valid / not expired")?.result !== "fail" &&
+    crossConflicts === 0 &&
+    extractionCompleteness >= 0.8;
   const statusReasons = [
     `Baseline evidence checks: ${checks.filter((c) => c.result === "pass").length}/${checks.length} passed`,
     crossConflicts > 0
       ? `${crossConflicts} cross-document consistency ${pluralize(crossConflicts, "issue", "issues")} found`
-      : "No major cross-document consistency conflicts detected",
+      : pack04StyleFoodWasteIncomplete
+        ? "No major document conflicts detected, but expected food waste evidence was not found."
+        : "No major cross-document consistency conflicts detected",
     (nonMaintenanceConsistencyFindings.some((f) => f.key.includes("licence")) || nonMaintenanceConsistencyFindings.some((f) => f.key.includes("future") || f.key.includes("stale")))
       ? "Date/licence evidence requires review"
       : "No major date/licence conflicts detected",
@@ -1388,11 +1426,13 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     },
     score,
     score_reliability_note: mixedBusinessHighRisk ? mixedBusinessScoreReliabilityNote() : null,
-    confidence: finalConfidence,
+    confidence: pack04StyleFoodWasteIncomplete && finalConfidence !== "Low Confidence / Cannot Fully Verify" ? "High Confidence" : finalConfidence,
     plain_english_verdict:
       mixedBusinessHighRisk
         ? verdictForMixedBusinessPack()
-        : verdict(finalConfidence, score.status, missingDocs.length, incompleteEvidence, hasOnlyExpiredNowMaintenanceIssue),
+        : pack04StyleFoodWasteIncomplete
+          ? "Core waste evidence is present and internally consistent, but food waste evidence was expected based on the business profile and was not found. Upload food waste collection evidence or contract documentation before relying on this pack."
+          : verdict(finalConfidence, score.status, missingDocs.length, incompleteEvidence, hasOnlyExpiredNowMaintenanceIssue),
     top_risks: businessRisks.filter(isBusinessRelevantRisk).slice(0, mixedBusinessHighRisk ? 4 : 5),
     missing_documents: missingDocs,
     compliance_checks: checks,
@@ -1401,6 +1441,8 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     cannot_verify: Array.from(cannotVerify),
     recommended_actions: hasOnlyExpiredNowMaintenanceIssue
       ? ["Upload current carrier licence evidence for ongoing compliance."]
+      : pack04StyleFoodWasteIncomplete
+        ? ["Upload food waste collection evidence or contract documentation."]
       : finalActions,
     consistency_findings: nonMaintenanceConsistencyFindings,
     confidence_contributors: confidenceContributors,
@@ -1418,7 +1460,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
       unclear_entity_names: entityValidation.unclear_entity_names,
       unmatched_business_names: entityValidation.unmatched_producer_names
     },
-    overall_assessment: assessment,
+    overall_assessment: pack04StyleFoodWasteIncomplete ? "Evidence pack incomplete (food waste evidence missing)" : assessment,
     status_reasons: statusReasons,
     informational_findings: informationalFindings
   };
