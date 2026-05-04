@@ -114,6 +114,14 @@ type NotUsedClassification = {
   category: "unrelated" | "unreadable" | "ambiguous" | "potentially_relevant_unreadable";
 };
 
+function pluralize(count: number, singular: string, plural: string) {
+  return count === 1 ? singular : plural;
+}
+
+export function pluralizeForTest(count: number, singular: string, plural: string) {
+  return pluralize(count, singular, plural);
+}
+
 function hasText(v: string | null | undefined) {
   return Boolean(v && v.trim().length > 0);
 }
@@ -458,7 +466,7 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
       result: "attention_needed",
       evidence_used: failedDocs.map((d) => d.file_name),
       affected_document: failedDocs[0]?.file_name ?? null,
-      recommended_action: "Rescan failed documents or upload clearer copies.",
+      recommended_action: "Re-upload failed documents or upload clearer copies.",
       source_reference: "No source reference available for this specific check."
     });
   }
@@ -867,11 +875,20 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   const cannotVerify = new Set<string>();
   if (!docs.length) cannotVerify.add("No documents uploaded for review.");
   const reviewCount = docs.filter((d) => d.processing_status === "review").length;
-  if (reviewCount > 0) cannotVerify.add(`${reviewCount} documents could not be fully interpreted.`);
+  if (reviewCount > 0)
+    cannotVerify.add(
+      `${reviewCount} ${pluralize(reviewCount, "document could", "documents could")} not be fully interpreted.`
+    );
   const unsupportedCount = notUsedDocs.filter((d) => d.category === "unrelated" || d.category === "ambiguous").length;
-  if (unsupportedCount > 0) cannotVerify.add(`${unsupportedCount} unsupported documents were excluded from the assessment.`);
+  if (unsupportedCount > 0)
+    cannotVerify.add(
+      `${unsupportedCount} unsupported ${pluralize(unsupportedCount, "file was", "files were")} excluded from the assessment.`
+    );
   const failedCount = notUsedDocs.filter((d) => d.category === "unreadable" || d.category === "potentially_relevant_unreadable").length;
-  if (failedCount > 0) cannotVerify.add(`${failedCount} document${failedCount === 1 ? "" : "s"} failed processing and should be re-uploaded if relevant.`);
+  if (failedCount > 0)
+    cannotVerify.add(
+      `${failedCount} ${pluralize(failedCount, "document failed", "documents failed")} processing and should be re-uploaded if relevant.`
+    );
   checks.filter((c) => c.result === "cannot_verify").forEach((c) => cannotVerify.add(`${c.check_name}: cannot verify with current evidence.`));
   if (checks.some((c) => c.source_reference.startsWith("No source reference available"))) {
     cannotVerify.add("Some checks could not be linked to an official source reference.");
@@ -942,13 +959,15 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     `Baseline evidence checks: ${checks.filter((c) => c.result === "pass").length}/${checks.length} passed`,
     `Extraction completeness: ${Math.round((docs.filter((d) => d.processing_status === "processed" && !d.ai_extracted_json?.missing_fields?.length).length / Math.max(1, docs.filter((d) => d.processing_status === "processed").length)) * 100)}%`,
     `Business-level risks (high/medium): ${[...openAlerts, ...cross.business_level_risks].filter((a) => a.severity === "high" || a.severity === "medium").length}`,
-    `Cross-document findings: ${cross.consistency_findings.length}`,
+    `Cross-document ${pluralize(cross.consistency_findings.length, "finding", "findings")}: ${cross.consistency_findings.length}`,
     `Irrelevant/unknown docs: ${docs.filter((d) => d.document_type === "unknown").length}/${docs.length}`,
     `Duplicate docs flagged: ${cross.consistency_findings.find((f) => f.key === "duplicate_documents")?.evidence.length ?? 0}`,
     `Source coverage: ${checks.filter((c) => !c.source_reference.startsWith("No source reference available")).length}/${checks.length}`
   ];
   if (entityValidation.finding) {
-    confidenceContributors.push(`Entity match ratio: ${Math.round(entityValidation.match_ratio * 100)}% (${entityValidation.producer_names.length} producer/customer names detected)`);
+    confidenceContributors.push(
+      `Entity match ratio: ${Math.round(entityValidation.match_ratio * 100)}% (${entityValidation.producer_names.length} producer/customer ${pluralize(entityValidation.producer_names.length, "name", "names")} detected)`
+    );
   }
 
   const carrierCheck = checks.find((c) => c.check_name === "Carrier licence valid / not expired");
@@ -984,12 +1003,18 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   });
   const statusReasons = [
     `Baseline evidence checks: ${checks.filter((c) => c.result === "pass").length}/${checks.length} passed`,
-    crossConflicts > 0 ? `${crossConflicts} cross-document consistency issues found` : "No major cross-document consistency conflicts detected",
+    crossConflicts > 0
+      ? `${crossConflicts} cross-document consistency ${pluralize(crossConflicts, "issue", "issues")} found`
+      : "No major cross-document consistency conflicts detected",
     (cross.consistency_findings.some((f) => f.key.includes("licence")) || cross.consistency_findings.some((f) => f.key.includes("future") || f.key.includes("stale")))
       ? "Date/licence evidence requires review"
       : "No major date/licence conflicts detected",
     docs.filter((d) => d.document_type === "unknown").length > 0
-      ? `${docs.filter((d) => d.document_type === "unknown").length} unsupported files were excluded`
+      ? `${docs.filter((d) => d.document_type === "unknown").length} unsupported ${pluralize(
+          docs.filter((d) => d.document_type === "unknown").length,
+          "file was",
+          "files were"
+        )} excluded`
       : "No unsupported files were excluded"
   ];
 

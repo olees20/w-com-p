@@ -2,7 +2,6 @@ import { notFound } from "next/navigation";
 import { createServerClient } from "@/lib/supabase/server";
 import { deleteDocumentAction } from "../actions";
 import { SubmitButton } from "@/components/ui/submit-button";
-import { RescanButton } from "@/components/documents/rescan-button";
 import { DocumentProcessingProgress } from "@/components/documents/document-processing-progress";
 import { DownloadButton } from "@/components/documents/download-button";
 
@@ -105,7 +104,6 @@ export default async function DocumentDetailPage({ params }: { params: { id: str
           </div>
           <div className="flex flex-wrap gap-2">
             <DownloadButton documentId={doc.id} />
-            {canEdit ? <RescanButton documentId={doc.id} /> : null}
             {canEdit ? (
               <form action={deleteDocumentAction}>
                 <input type="hidden" name="document_id" value={doc.id} />

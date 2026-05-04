@@ -2,7 +2,6 @@ import { createServerClient } from "@/lib/supabase/server";
 import Link from "next/link";
 import { DocumentUpload } from "@/components/documents/document-upload";
 import { DocumentProcessingProgress } from "@/components/documents/document-processing-progress";
-import { RescanButton } from "@/components/documents/rescan-button";
 import { validateSingleBusinessPack } from "@/lib/entity-pack-validation";
 
 export default async function UploadPage() {
@@ -118,7 +117,6 @@ export default async function UploadPage() {
                     <p className="text-sm font-semibold text-[#111827]">{doc.file_name}</p>
                     <p className="text-xs text-[#6B7280]">{doc.processing_status ?? "uploaded"}</p>
                   </div>
-                  {canEdit ? <RescanButton documentId={doc.id} compact /> : null}
                 </div>
                 <div className="mt-2">
                   <DocumentProcessingProgress status={doc.processing_status} />

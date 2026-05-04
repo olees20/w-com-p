@@ -99,7 +99,7 @@ export default async function DashboardPage() {
         <StepCard
           step={3}
           title="Processing status"
-          description="Track extraction status and rescan failed or low-confidence documents."
+          description="Track extraction status and re-upload failed or low-confidence documents."
           href="/dashboard/documents"
           done={processedDocs > 0}
         />

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createServerClient } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { processDocument, recalculateComplianceScore } from "@/lib/documents/pipeline";
+import { recalculateComplianceScore } from "@/lib/documents/pipeline";
 import { requireEditableHealthCheckForDocument } from "@/lib/health-checks";
 
 async function getOwnedDocument(documentId: string, userId: string) {
@@ -18,33 +18,6 @@ async function getOwnedDocument(documentId: string, userId: string) {
     throw new Error("Document not found or access denied.");
   }
   return data;
-}
-
-export async function rescanDocumentAction(formData: FormData) {
-  const documentId = String(formData.get("document_id") ?? "");
-  if (!documentId) return;
-
-  const supabase = await createServerClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
-  if (!user) return;
-
-  const doc = await getOwnedDocument(documentId, user.id);
-  try {
-    await requireEditableHealthCheckForDocument(doc.id, user.id);
-    await supabaseAdmin.from("documents").update({ processing_status: "processing", processing_error: null }).eq("id", doc.id);
-    await processDocument(doc.id);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown rescan error.";
-    await supabaseAdmin.from("documents").update({ processing_status: "failed", processing_error: message }).eq("id", doc.id);
-  } finally {
-    revalidatePath("/dashboard");
-    revalidatePath("/dashboard/documents");
-    revalidatePath(`/dashboard/documents/${doc.id}`);
-    revalidatePath("/dashboard/assistant");
-    revalidatePath("/dashboard/rules");
-  }
 }
 
 export async function deleteDocumentAction(formData: FormData) {

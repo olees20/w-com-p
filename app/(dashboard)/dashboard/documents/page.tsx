@@ -2,7 +2,6 @@ import { createServerClient } from "@/lib/supabase/server";
 import { Button } from "@/components/ui/button";
 import { deleteDocumentAction } from "./actions";
 import { SubmitButton } from "@/components/ui/submit-button";
-import { RescanButton } from "@/components/documents/rescan-button";
 import { DocumentProcessingProgress } from "@/components/documents/document-processing-progress";
 import { DownloadButton } from "@/components/documents/download-button";
 
@@ -73,10 +72,10 @@ export default async function DocumentsPage() {
     <div className="space-y-4">
       <section className="app-panel p-5">
         <h1 className="text-2xl font-extrabold tracking-tight text-[#111827]">Documents</h1>
-        <p className="mt-1 text-sm text-[#6B7280]">View, manage, download, rescan, and delete your compliance documents.</p>
+        <p className="mt-1 text-sm text-[#6B7280]">View, manage, download, and delete your compliance documents.</p>
         {!canEdit ? (
           <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            Report is locked. Upload, rescan, and delete are disabled until you start a new Health Check — £99.
+            Report is locked. Upload and delete are disabled until you start a new Health Check — £99.
           </p>
         ) : null}
       </section>
@@ -125,7 +124,6 @@ export default async function DocumentsPage() {
                       View details
                     </Button>
                     <DownloadButton documentId={doc.id} />
-                    {canEdit ? <RescanButton documentId={doc.id} compact /> : null}
                     {canEdit ? (
                       <form action={deleteDocumentAction}>
                         <input type="hidden" name="document_id" value={doc.id} />

@@ -21,6 +21,21 @@ export type EntityValidationResult = {
   match_ratio: number;
 };
 
+type CarrierEntityRow = {
+  document_id: string;
+  document_type: string | null;
+  carrier_name: string;
+};
+
+const ROLE_PRECEDENCE: Record<EntityRole, number> = {
+  carrier_supplier: 5,
+  destination_facility: 4,
+  producer_customer: 3,
+  site_address: 2,
+  unclear: 1,
+  licence_number: 0
+};
+
 export type EntityRole =
   | "producer_customer"
   | "carrier_supplier"
@@ -61,6 +76,13 @@ export function isLikelyAddress(value: string | null | undefined) {
   return false;
 }
 
+function isLikelyFacilityName(value: string | null | undefined) {
+  if (!value) return false;
+  return /\b(facility|transfer station|processing facility|treatment facility|recycling centre|waste site|landfill)\b/i.test(
+    value
+  );
+}
+
 function extractNamesFromUnknown(value: unknown): string[] {
   if (typeof value === "string") return value.trim() ? [value.trim()] : [];
   if (Array.isArray(value)) return value.flatMap((v) => extractNamesFromUnknown(v));
@@ -71,18 +93,109 @@ function pickRoleNames(payload: Record<string, unknown>, keys: string[]) {
   return unique(keys.flatMap((k) => extractNamesFromUnknown(payload[k])));
 }
 
+export function carrierEntitiesForDocument(doc: Pick<ReportDocument, "id" | "document_type" | "extracted_supplier" | "ai_extracted_json">): CarrierEntityRow[] {
+  const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
+  const carriers = carrierRoleNames(payload, doc.document_type, doc.extracted_supplier);
+  const destinationSet = new Set(destinationRoleNames(payload).map((name) => normalizeName(name)));
+  const producerSet = new Set(producerRoleNames(payload).map((name) => normalizeName(name)));
+  const siteSet = new Set(siteAddressRoleNames(payload).map((name) => normalizeName(name)));
+
+  return carriers
+    .map((carrier) => ({
+      document_id: doc.id,
+      document_type: doc.document_type,
+      carrier_name: carrier
+    }))
+    .filter((entry) => {
+      const n = normalizeName(entry.carrier_name);
+      if (!n) return false;
+      if (destinationSet.has(n)) return false;
+      if (producerSet.has(n)) return false;
+      if (siteSet.has(n)) return false;
+      return true;
+    });
+}
+
+export function buildCanonicalCarrierSupplierNames(
+  docs: Array<Pick<ReportDocument, "id" | "document_type" | "processing_status" | "extracted_supplier" | "ai_extracted_json">>,
+  options?: { onboardedBusinessName?: string | null }
+) {
+  const processed = docs.filter((d) => d.processing_status === "processed");
+  const rows = processed
+    .filter((d) => ["waste_transfer_note", "invoice", "carrier_licence", "contract"].includes(d.document_type ?? ""))
+    .flatMap((d) => carrierEntitiesForDocument(d));
+  const onboarded = normalizeName(options?.onboardedBusinessName);
+  const names = unique(
+    rows
+      .map((row) => row.carrier_name)
+      .filter((name) => {
+        const n = normalizeName(name);
+        if (!n) return false;
+        if (onboarded && (n.includes(onboarded) || onboarded.includes(n))) return false;
+        return true;
+      })
+  );
+  return { names, rows };
+}
+
+function applyEntityRolePrecedence(params: {
+  producers: string[];
+  carriers: string[];
+  destinations: string[];
+  siteAddresses: string[];
+  unclear: string[];
+}) {
+  const byNormalized = new Map<
+    string,
+    {
+      display: string;
+      role: EntityRole;
+    }
+  >();
+
+  const add = (values: string[], role: EntityRole) => {
+    for (const value of values) {
+      const normalized = normalizeName(value);
+      if (!normalized) continue;
+      const existing = byNormalized.get(normalized);
+      if (!existing || ROLE_PRECEDENCE[role] > ROLE_PRECEDENCE[existing.role]) {
+        byNormalized.set(normalized, { display: value, role });
+      }
+    }
+  };
+
+  add(params.unclear, "unclear");
+  add(params.siteAddresses, "site_address");
+  add(params.producers, "producer_customer");
+  add(params.destinations, "destination_facility");
+  add(params.carriers, "carrier_supplier");
+
+  const entries = Array.from(byNormalized.values());
+  return {
+    producers: entries.filter((e) => e.role === "producer_customer").map((e) => e.display),
+    carriers: entries.filter((e) => e.role === "carrier_supplier").map((e) => e.display),
+    destinations: entries.filter((e) => e.role === "destination_facility").map((e) => e.display),
+    siteAddresses: entries.filter((e) => e.role === "site_address").map((e) => e.display),
+    unclear: entries.filter((e) => e.role === "unclear").map((e) => e.display)
+  };
+}
+
 export function destinationRoleNames(payload: Record<string, unknown>) {
-  return pickRoleNames(payload, [
+  const explicitDestinationKeys = [
     "destination",
-    "destination_name",
     "waste_destination",
     "disposal_site",
     "receiving_facility",
     "treatment_facility",
     "transfer_station",
-    "facility",
-    "destination_address"
-  ]);
+    "waste_processing_facility"
+  ];
+  const genericFacilityKeys = ["facility", "destination_name", "destination_address"];
+
+  const explicit = pickRoleNames(payload, explicitDestinationKeys).filter((value) => !isLikelyAddress(value) || isLikelyFacilityName(value));
+  const generic = pickRoleNames(payload, genericFacilityKeys).filter((value) => isLikelyFacilityName(value));
+
+  return unique([...explicit, ...generic]);
 }
 
 export function siteAddressRoleNames(payload: Record<string, unknown>) {
@@ -178,10 +291,10 @@ export function validateSingleBusinessPack(params: {
 }): EntityValidationResult {
   const processed = params.documents.filter((d) => d.processing_status === "processed");
   const producerCandidates: string[] = [];
-  const carrierCandidates: string[] = [];
   const destinationCandidates: string[] = [];
   const siteAddressCandidates: string[] = [];
   const unclearCandidates: string[] = [];
+  const canonicalCarriers = buildCanonicalCarrierSupplierNames(params.documents, { onboardedBusinessName: params.onboardedBusinessName });
 
   for (const doc of processed) {
     const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
@@ -208,12 +321,11 @@ export function validateSingleBusinessPack(params: {
     ]);
     const producers = rawProducers.filter((value) => !isLikelyAddress(value));
     const producerAddresses = rawProducers.filter((value) => isLikelyAddress(value));
-    const carriers = carrierRoleNames(payload, doc.document_type, doc.extracted_supplier);
+    const carriers = carrierEntitiesForDocument(doc).map((row) => row.carrier_name);
 
     const destinations = destinationRoleNames(payload);
 
     producerCandidates.push(...producers);
-    carrierCandidates.push(...carriers);
     destinationCandidates.push(...destinations);
     siteAddressCandidates.push(...producerAddresses, ...siteAddressRoleNames(payload));
 
@@ -231,23 +343,20 @@ export function validateSingleBusinessPack(params: {
     );
   }
 
-  const producerNames = unique(producerCandidates);
-  const producerSet = new Set(producerNames.map((name) => normalizeName(name)));
-  const destinationSet = new Set(destinationCandidates.map((name) => normalizeName(name)));
+  const precedenceResolved = applyEntityRolePrecedence({
+    producers: unique(producerCandidates),
+    carriers: canonicalCarriers.names,
+    destinations: unique(destinationCandidates),
+    siteAddresses: unique(siteAddressCandidates),
+    unclear: unique(unclearCandidates)
+  });
+
+  const producerNames = unique(precedenceResolved.producers);
   const onboarded = normalizeName(params.onboardedBusinessName);
-  const carrierNames = unique(
-    carrierCandidates.filter((name) => {
-      const n = normalizeName(name);
-      if (!n) return false;
-      if (producerSet.has(n)) return false;
-      if (destinationSet.has(n)) return false;
-      if (onboarded && (n.includes(onboarded) || onboarded.includes(n))) return false;
-      return true;
-    })
-  );
-  const destinationNames = unique(destinationCandidates);
-  const siteAddressNames = unique(siteAddressCandidates);
-  const unclearEntityNames = unique(unclearCandidates);
+  const carrierNames = unique(precedenceResolved.carriers);
+  const destinationNames = unique(precedenceResolved.destinations);
+  const siteAddressNames = unique(precedenceResolved.siteAddresses);
+  const unclearEntityNames = unique(precedenceResolved.unclear);
 
   const normalizedKnownSites = (params.knownSiteNames ?? []).map((name) => normalizeName(name)).filter(Boolean);
   const matched = producerNames.filter((name) => {

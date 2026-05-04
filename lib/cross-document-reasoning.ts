@@ -1,5 +1,5 @@
 import type { ReportDocument, ReportAlert } from "@/lib/health-check-report";
-import { carrierRoleNames, destinationRoleNames, producerRoleNames, siteAddressRoleNames } from "@/lib/entity-pack-validation";
+import { buildCanonicalCarrierSupplierNames, carrierEntitiesForDocument } from "@/lib/entity-pack-validation";
 
 type BusinessInfo = {
   produces_food_waste: boolean | null;
@@ -86,26 +86,14 @@ export function runCrossDocumentReasoning(params: {
     return !!expiry && expiry < now;
   });
 
-  const carrierDocs = processedDocs
-    .filter((d) => ["waste_transfer_note", "invoice", "carrier_licence", "contract"].includes(d.document_type ?? ""))
-    .flatMap((d) => {
-      const payload = (d.ai_extracted_json ?? {}) as Record<string, unknown>;
-      const carriers = carrierRoleNames(payload, d.document_type, d.extracted_supplier);
-      return carriers.map((carrier) => ({ doc: d, carrier }));
-    })
-    .filter((entry) => {
-      const payload = (entry.doc.ai_extracted_json ?? {}) as Record<string, unknown>;
-      const destinationSet = new Set(destinationRoleNames(payload).map((name) => normalizeName(name)));
-      const producerSet = new Set(producerRoleNames(payload).map((name) => normalizeName(name)));
-      const siteSet = new Set(siteAddressRoleNames(payload).map((name) => normalizeName(name)));
-      const n = normalizeName(entry.carrier);
-      if (!n) return false;
-      if (destinationSet.has(n)) return false;
-      if (producerSet.has(n)) return false;
-      if (siteSet.has(n)) return false;
-      return true;
-    })
-    .filter((x) => normalizeName(x.carrier));
+  const canonicalCarrierRows = buildCanonicalCarrierSupplierNames(processedDocs).rows;
+  const byId = new Map(processedDocs.map((doc) => [doc.id, doc]));
+  const carrierDocs = canonicalCarrierRows
+    .map((row) => ({
+      doc: byId.get(row.document_id),
+      carrier: row.carrier_name
+    }))
+    .filter((row): row is { doc: ReportDocument; carrier: string } => Boolean(row.doc && normalizeName(row.carrier)));
 
   const carriers = new Map<string, Array<{ doc: ReportDocument; carrier: string }>>();
   for (const row of carrierDocs) {
@@ -151,14 +139,16 @@ export function runCrossDocumentReasoning(params: {
   const unclearEntityEvidence = processedDocs
     .filter((d) => ["waste_transfer_note", "invoice", "contract"].includes(d.document_type ?? ""))
     .flatMap((d) => {
+      const explicitCarriers = carrierEntitiesForDocument(d).map((row) => row.carrier_name);
       const payload = (d.ai_extracted_json ?? {}) as Record<string, unknown>;
-      const explicitCarriers = carrierRoleNames(payload, d.document_type, null);
-      const producers = producerRoleNames(payload);
-      const hasAmbiguousBusiness =
-        typeof payload.business_name === "string" ||
-        typeof payload.company_name === "string" ||
-        typeof payload.entity_name === "string";
-      if (explicitCarriers.length === 0 && (producers.length > 0 || hasAmbiguousBusiness)) {
+      const hasProducerHint =
+        typeof payload.producer_name === "string" ||
+        typeof payload.customer_name === "string" ||
+        typeof payload.client_name === "string" ||
+        typeof payload.current_holder === "string" ||
+        typeof payload.transferor === "string";
+      const hasAmbiguousBusiness = typeof payload.business_name === "string" || typeof payload.company_name === "string" || typeof payload.entity_name === "string";
+      if (explicitCarriers.length === 0 && (hasProducerHint || hasAmbiguousBusiness)) {
         return [`${d.file_name} -> unclear carrier/supplier role`];
       }
       return [];

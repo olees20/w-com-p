@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { carrierRoleNames, isLikelyAddress, producerRoleNames, validateSingleBusinessPack } from "@/lib/entity-pack-validation";
+import {
+  buildCanonicalCarrierSupplierNames,
+  carrierRoleNames,
+  isLikelyAddress,
+  producerRoleNames,
+  validateSingleBusinessPack
+} from "@/lib/entity-pack-validation";
 import type { ReportDocument } from "@/lib/health-check-report";
 
 const mkDoc = (overrides: Partial<ReportDocument>): ReportDocument => ({
@@ -201,4 +207,147 @@ test("does not classify normal business names as addresses", () => {
   assert.equal(isLikelyAddress("Northgate Bakery Ltd"), false);
   assert.equal(isLikelyAddress("Riverside Cafe Limited"), false);
   assert.equal(isLikelyAddress("Oak Table Restaurant Group"), false);
+});
+
+test("canonical carrier list includes all role-aware provider entities used by conflict checks", () => {
+  const docs: ReportDocument[] = [
+    mkDoc({
+      id: "wtn",
+      document_type: "waste_transfer_note",
+      ai_extracted_json: {
+        producer_name: "Bean & Brew Café Ltd",
+        carrier_name: "GreenCycle Waste Ltd",
+        destination: "Leeds Waste Processing Facility"
+      } as unknown as { missing_fields?: string[] },
+      extracted_supplier: "GreenCycle Waste Ltd"
+    }),
+    mkDoc({
+      id: "invoice",
+      file_name: "invoice.pdf",
+      document_type: "invoice",
+      ai_extracted_json: {
+        invoice_issuer: "GreenCycle Waste Ltd",
+        client_name: "Bean & Brew Café Ltd"
+      } as unknown as { missing_fields?: string[] },
+      extracted_supplier: "GreenCycle Waste Ltd"
+    }),
+    mkDoc({
+      id: "contract",
+      file_name: "contract.pdf",
+      document_type: "contract",
+      ai_extracted_json: {
+        supplier_name: "GreenCycle Waste Ltd",
+        client_name: "Bean & Brew Café Ltd"
+      } as unknown as { missing_fields?: string[] },
+      extracted_supplier: "GreenCycle Waste Ltd"
+    }),
+    mkDoc({
+      id: "licence",
+      file_name: "licence.pdf",
+      document_type: "carrier_licence",
+      ai_extracted_json: {
+        licensed_business: "York Waste Services Ltd"
+      } as unknown as { missing_fields?: string[] },
+      extracted_supplier: "York Waste Services Ltd"
+    })
+  ];
+
+  const canonical = buildCanonicalCarrierSupplierNames(docs, { onboardedBusinessName: "Bean & Brew Café Ltd" });
+  assert.ok(canonical.names.includes("GreenCycle Waste Ltd"));
+  assert.ok(canonical.names.includes("York Waste Services Ltd"));
+  assert.ok(!canonical.names.includes("Leeds Waste Processing Facility"));
+  assert.ok(!canonical.names.includes("Bean & Brew Café Ltd"));
+});
+
+test("entity role precedence classifies GreenCycle as carrier/supplier and not producer/unmatched", () => {
+  const docs: ReportDocument[] = [
+    mkDoc({
+      id: "wtn",
+      file_name: "wtn.pdf",
+      document_type: "waste_transfer_note",
+      ai_extracted_json: {
+        producer_name: "Bean & Brew Café Ltd",
+        carrier_name: "GreenCycle Waste Ltd",
+        destination: "Leeds Waste Processing Facility"
+      } as unknown as { missing_fields?: string[] },
+      extracted_supplier: "GreenCycle Waste Ltd"
+    }),
+    mkDoc({
+      id: "invoice",
+      file_name: "invoice.pdf",
+      document_type: "invoice",
+      ai_extracted_json: {
+        invoice_issuer: "GreenCycle Waste Ltd",
+        customer_name: "Bean & Brew Café Ltd"
+      } as unknown as { missing_fields?: string[] },
+      extracted_supplier: "GreenCycle Waste Ltd"
+    }),
+    mkDoc({
+      id: "contract",
+      file_name: "contract.pdf",
+      document_type: "contract",
+      ai_extracted_json: {
+        supplier_name: "GreenCycle Waste Ltd",
+        client_name: "Bean & Brew Café Ltd"
+      } as unknown as { missing_fields?: string[] },
+      extracted_supplier: "GreenCycle Waste Ltd"
+    }),
+    mkDoc({
+      id: "licence",
+      file_name: "licence.pdf",
+      document_type: "carrier_licence",
+      ai_extracted_json: {
+        licensed_business: "GreenCycle Waste Ltd"
+      } as unknown as { missing_fields?: string[] },
+      extracted_supplier: "GreenCycle Waste Ltd"
+    })
+  ];
+
+  const result = validateSingleBusinessPack({
+    onboardedBusinessName: "Bean & Brew Café Ltd",
+    documents: docs
+  });
+
+  assert.ok(result.carrier_names.includes("GreenCycle Waste Ltd"));
+  assert.ok(!result.producer_names.includes("GreenCycle Waste Ltd"));
+  assert.ok(!result.unmatched_producer_names.includes("GreenCycle Waste Ltd"));
+});
+
+test("destination vs site address mapping: producer address is site, labelled destination is facility", () => {
+  const docs: ReportDocument[] = [
+    mkDoc({
+      id: "d1",
+      file_name: "wtn-address-vs-destination.pdf",
+      document_type: "waste_transfer_note",
+      ai_extracted_json: {
+        producer_name: "Northgate Bakery Ltd",
+        current_holder_address: "18 Market Street, York, YO1 8AA",
+        destination: "Leeds Waste Processing Facility"
+      } as unknown as { missing_fields?: string[] }
+    })
+  ];
+
+  const result = validateSingleBusinessPack({ onboardedBusinessName: "Northgate Bakery Ltd", documents: docs });
+  assert.ok(result.site_address_names.includes("18 Market Street, York, YO1 8AA"));
+  assert.ok(result.destination_names.includes("Leeds Waste Processing Facility"));
+  assert.ok(!result.destination_names.includes("18 Market Street, York, YO1 8AA"));
+});
+
+test("collection point address stays site address; transfer station stays destination", () => {
+  const docs: ReportDocument[] = [
+    mkDoc({
+      id: "d2",
+      file_name: "wtn-collection-point.pdf",
+      document_type: "waste_transfer_note",
+      ai_extracted_json: {
+        collection_address: "Unit A, 10 King Street, Leeds",
+        destination: "York Transfer Station"
+      } as unknown as { missing_fields?: string[] }
+    })
+  ];
+
+  const result = validateSingleBusinessPack({ onboardedBusinessName: "Bean & Brew Café Ltd", documents: docs });
+  assert.ok(result.site_address_names.includes("Unit A, 10 King Street, Leeds"));
+  assert.ok(result.destination_names.includes("York Transfer Station"));
+  assert.ok(!result.destination_names.includes("Unit A, 10 King Street, Leeds"));
 });
