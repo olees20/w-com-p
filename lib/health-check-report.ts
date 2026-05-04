@@ -122,6 +122,12 @@ type SupportingDocument = {
 
 type UnknownDocRole = "supporting" | "irrelevant" | "ambiguous";
 type DocumentAssessmentRole = "PRIMARY_EVIDENCE" | "SUPPORTING_EVIDENCE" | "IRRELEVANT_NOT_USED";
+type DocumentRelevanceStatus = DocumentAssessmentRole | "UNUSABLE";
+type DocumentRelevance = {
+  relevance_status: DocumentRelevanceStatus;
+  relevance_reason: string;
+  used_in_assessment: boolean;
+};
 
 function pluralize(count: number, singular: string, plural: string) {
   return count === 1 ? singular : plural;
@@ -167,6 +173,40 @@ function classifyDocumentAssessmentRole(doc: ReportDocument): DocumentAssessment
     return "IRRELEVANT_NOT_USED";
   }
   return "SUPPORTING_EVIDENCE";
+}
+
+function getDocumentRelevance(doc: ReportDocument): DocumentRelevance {
+  const role = classifyDocumentAssessmentRole(doc);
+  if (role === "IRRELEVANT_NOT_USED") {
+    return {
+      relevance_status: "IRRELEVANT_NOT_USED",
+      relevance_reason: "unrelated to waste compliance",
+      used_in_assessment: false
+    };
+  }
+
+  const hasNoType = !hasText(doc.document_type);
+  const hasNoSummary = !hasText(doc.ai_summary);
+  const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
+  const payloadKeys = Object.keys(payload).filter((k) => k !== "missing_fields");
+  const hasNoStructured = payloadKeys.length === 0;
+  if (doc.processing_status === "failed" && hasNoType && hasNoSummary && hasNoStructured) {
+    return {
+      relevance_status: "UNUSABLE",
+      relevance_reason: "unreadable or extraction failed",
+      used_in_assessment: false
+    };
+  }
+
+  return {
+    relevance_status: role,
+    relevance_reason: role === "PRIMARY_EVIDENCE" ? "primary waste compliance evidence" : "supporting waste compliance evidence",
+    used_in_assessment: true
+  };
+}
+
+export function classifyDocumentRelevanceForTest(doc: ReportDocument) {
+  return getDocumentRelevance(doc);
 }
 
 function classifySupportingDocuments(docs: ReportDocument[]): SupportingDocument[] {
@@ -290,7 +330,8 @@ function isLowQualityReadable(doc: ReportDocument) {
 }
 
 function computeDocumentCompleteness(doc: ReportDocument) {
-  if (classifyDocumentAssessmentRole(doc) === "IRRELEVANT_NOT_USED") {
+  const relevance = getDocumentRelevance(doc);
+  if (!relevance.used_in_assessment) {
     return { applicable: false, ratio: 0 };
   }
   const docType = doc.document_type ?? "unknown";
@@ -531,7 +572,7 @@ export function extractDestinationFromEvidenceForTest(doc: Pick<ReportDocument, 
 function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; rules: RuleRef[]; sources: SourceRef[] }) {
   const { business, docs, rules, sources } = params;
 
-  const relevantDocs = docs.filter((doc) => classifyDocumentAssessmentRole(doc) !== "IRRELEVANT_NOT_USED");
+  const relevantDocs = docs.filter((doc) => getDocumentRelevance(doc).used_in_assessment);
   const hasAnyUploads = docs.length > 0;
   const noRelevantEvidence = hasAnyUploads && relevantDocs.length === 0;
   const processed = relevantDocs.filter(isProcessed);
@@ -752,7 +793,7 @@ function scoreFromChecks(params: { checks: BaselineCheck[]; docs: ReportDocument
   const supplierEvidenceFromOps = processed
     .filter((d) => d.document_type === "waste_transfer_note" || d.document_type === "invoice")
     .filter((d) => hasText(getCarrierNameFromDoc(d)));
-  const irrelevantOnlyPack = docs.length > 0 && docs.every((d) => classifyDocumentAssessmentRole(d) === "IRRELEVANT_NOT_USED");
+  const irrelevantOnlyPack = docs.length > 0 && docs.every((d) => !getDocumentRelevance(d).used_in_assessment);
 
   if (byName("Waste Transfer Note present")?.result === "fail") deductions.push({ reason: "Missing waste transfer note", points: 35 });
   if (byName("Carrier licence valid / not expired")?.result === "fail") deductions.push({ reason: "Carrier licence not valid at transfer date", points: 28 });
@@ -827,7 +868,7 @@ function confidenceFromSignals(params: {
   const extractionCompleteness = computeRelevantExtractionCompleteness(docs);
   const duplicateCount = crossFindings.find((f) => f.key === "duplicate_documents")?.evidence.length ?? 0;
   const duplicateRatio = docs.length === 0 ? 0 : duplicateCount / docs.length;
-  const irrelevantCount = docs.filter((d) => classifyDocumentAssessmentRole(d) === "IRRELEVANT_NOT_USED").length;
+  const irrelevantCount = docs.filter((d) => !getDocumentRelevance(d).used_in_assessment).length;
   const irrelevantRatio = docs.length === 0 ? 0 : irrelevantCount / docs.length;
   const hasMajorCarrierConflict = crossFindings.some((f) => f.key === "conflicting_waste_carriers" && f.severity === "high");
   const hasLicenceMismatch = crossFindings.some((f) => f.key === "licence_mismatch");
@@ -1175,15 +1216,25 @@ function looksLikeHazardousEvidence(doc: ReportDocument) {
 function classifyNotUsedDocuments(docs: ReportDocument[], business: BusinessInfo): NotUsedClassification[] {
   const out: NotUsedClassification[] = [];
   for (const doc of docs) {
+    const relevance = getDocumentRelevance(doc);
     const isUnknown = (doc.document_type ?? "unknown") === "unknown";
     const isFailed = doc.processing_status === "failed";
     const isReview = doc.processing_status === "review";
-    if (classifyDocumentAssessmentRole(doc) === "IRRELEVANT_NOT_USED") {
+    if (relevance.relevance_status === "IRRELEVANT_NOT_USED") {
       out.push({
         file_name: doc.file_name,
         reason: "Unrelated to waste compliance",
         recommended_action: null,
         category: "unrelated"
+      });
+      continue;
+    }
+    if (relevance.relevance_status === "UNUSABLE") {
+      out.push({
+        file_name: doc.file_name,
+        reason: "Unreadable / processing failed",
+        recommended_action: `Re-upload ${doc.file_name} if it was intended to evidence waste compliance.`,
+        category: "unreadable"
       });
       continue;
     }
@@ -1268,7 +1319,7 @@ function buildConsistencySummary(
   findings: ConsistencyFinding[],
   options?: { carriersDetected?: string[]; destinationsDetected?: string[] }
 ) {
-  const assessableDocs = docs.filter((doc) => classifyDocumentAssessmentRole(doc) !== "IRRELEVANT_NOT_USED");
+  const assessableDocs = docs.filter((doc) => getDocumentRelevance(doc).used_in_assessment);
   const carriers =
     options?.carriersDetected ?? Array.from(new Set(assessableDocs.map((d) => d.extracted_supplier?.trim()).filter((v): v is string => !!v)));
   const licenceNumbers = Array.from(new Set(assessableDocs.map((d) => d.extracted_licence_number?.trim()).filter((v): v is string => !!v)));
@@ -1353,8 +1404,12 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
 
   const notUsedDocs = classifyNotUsedDocuments(docs, business);
   const supportingDocs = classifySupportingDocuments(docs);
+  const usedDocs = docs.filter((doc) => getDocumentRelevance(doc).used_in_assessment);
   const cannotVerify = new Set<string>();
   if (!docs.length) cannotVerify.add("No documents uploaded for review.");
+  if (docs.length > 0 && usedDocs.length === 0) {
+    cannotVerify.add("No relevant waste compliance documents were detected in the upload.");
+  }
   const reviewCount = docs.filter((d) => d.processing_status === "review").length;
   if (reviewCount > 0)
     cannotVerify.add(
@@ -1427,6 +1482,13 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   const finalActions = mixedBusinessHighRisk
     ? mixedBusinessPrimaryActions()
     : uniqueRefinedActions;
+  const finalActionsWithRelevanceFallback =
+    docs.length > 0 && usedDocs.length === 0
+      ? [
+          "Upload waste compliance documents such as WTNs, waste invoices, carrier licence evidence, and food waste collection records.",
+          ...finalActions
+        ]
+      : finalActions;
 
   const baseScore = scoreFromChecks({ checks, docs, business });
   const mergedBreakdown = mergeDeductions(
@@ -1549,7 +1611,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     `Extraction completeness: ${Math.round(extractionCompleteness * 100)}%`,
     `Business-level risks (high/medium): ${countHighMediumRisks(topRisks)}`,
     `Cross-document ${pluralize(nonMaintenanceConsistencyFindings.length, "finding", "findings")}: ${nonMaintenanceConsistencyFindings.length}`,
-    `Irrelevant/unknown docs: ${docs.filter((d) => classifyDocumentAssessmentRole(d) === "IRRELEVANT_NOT_USED").length}/${docs.length}`,
+    `Irrelevant/unknown docs: ${docs.filter((d) => !getDocumentRelevance(d).used_in_assessment).length}/${docs.length}`,
     `Duplicate docs flagged: ${nonMaintenanceConsistencyFindings.find((f) => f.key === "duplicate_documents")?.evidence.length ?? 0}`,
     `Source coverage: ${checks.filter((c) => !c.source_reference.startsWith("No source reference available")).length}/${checks.length}`
   ];
@@ -1600,9 +1662,9 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     (nonMaintenanceConsistencyFindings.some((f) => f.key.includes("licence")) || nonMaintenanceConsistencyFindings.some((f) => f.key.includes("future") || f.key.includes("stale")))
       ? "Date/licence evidence requires review"
       : "No major date/licence conflicts detected",
-    docs.filter((d) => classifyDocumentAssessmentRole(d) === "IRRELEVANT_NOT_USED").length > 0
-      ? `${docs.filter((d) => classifyDocumentAssessmentRole(d) === "IRRELEVANT_NOT_USED").length} unsupported ${pluralize(
-          docs.filter((d) => classifyDocumentAssessmentRole(d) === "IRRELEVANT_NOT_USED").length,
+    docs.filter((d) => !getDocumentRelevance(d).used_in_assessment).length > 0
+      ? `${docs.filter((d) => !getDocumentRelevance(d).used_in_assessment).length} unsupported ${pluralize(
+          docs.filter((d) => !getDocumentRelevance(d).used_in_assessment).length,
           "file was",
           "files were"
         )} excluded`
@@ -1644,7 +1706,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
       ? ["Upload current carrier licence evidence for ongoing compliance."]
       : pack04StyleFoodWasteIncomplete
         ? ["Upload food waste collection evidence or contract documentation."]
-      : finalActions,
+      : Array.from(new Set(finalActionsWithRelevanceFallback)),
     consistency_findings: nonMaintenanceConsistencyFindings,
     confidence_contributors: confidenceContributors,
     documents_not_used: notUsedDocs.map((d) => ({ file_name: d.file_name, reason: d.reason })),

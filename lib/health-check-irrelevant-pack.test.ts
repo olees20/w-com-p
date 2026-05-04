@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildChecksForTest,
+  classifyDocumentRelevanceForTest,
   classifyNotUsedDocumentsForTest,
   computeRelevantExtractionCompletenessForTest,
   scoreFromChecksForTest,
@@ -63,6 +64,11 @@ test("all-irrelevant pack marks docs as not used and fails baseline evidence che
   const notUsed = classifyNotUsedDocumentsForTest(docs, { produces_hazardous_waste: false });
   assert.equal(notUsed.length, 2);
   assert.ok(notUsed.every((d) => d.reason.toLowerCase().includes("unrelated")));
+  const relevance = docs.map((d) => classifyDocumentRelevanceForTest(d));
+  assert.equal(relevance[0].relevance_status, "IRRELEVANT_NOT_USED");
+  assert.equal(relevance[1].relevance_status, "IRRELEVANT_NOT_USED");
+  assert.equal(relevance[0].used_in_assessment, false);
+  assert.equal(relevance[1].used_in_assessment, false);
 });
 
 test("irrelevant content is excluded even when document_type looks like primary evidence", () => {
