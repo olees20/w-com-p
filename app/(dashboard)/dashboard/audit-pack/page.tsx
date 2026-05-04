@@ -232,9 +232,16 @@ export default async function AuditPackPage() {
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm print:shadow-none">
         <h2 className="text-lg font-semibold text-slate-900">Documents Not Used In The Assessment</h2>
         <div className="mt-3 space-y-1 text-sm text-slate-700">
-          {report.documents_not_used.length
-            ? report.documents_not_used.map((d) => <p key={`${d.file_name}-${d.reason}`}>- {d.file_name}: {d.reason}</p>)
-            : <p>No irrelevant documents were excluded from the assessment.</p>}
+          {report.documents_not_used.length ? (
+            <>
+              {report.documents_not_used.map((d) => <p key={`${d.file_name}-${d.reason}`}>- {d.file_name}: {d.reason}</p>)}
+              {report.documents.length > 0 && report.documents_not_used.length === report.documents.length ? (
+                <p>All uploaded documents were reviewed; however, none contributed to waste compliance evidence.</p>
+              ) : null}
+            </>
+          ) : (
+            <p>No irrelevant documents were excluded from the assessment.</p>
+          )}
         </div>
       </section>
 
