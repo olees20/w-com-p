@@ -57,6 +57,7 @@ export type ScoreBreakdown = {
   starting_score: number;
   deductions: Array<{ reason: string; points: number }>;
   final_score: number;
+  notes?: string[];
 };
 
 export type HealthCheckReport = {
@@ -72,6 +73,7 @@ export type HealthCheckReport = {
     status: "compliant" | "attention_needed" | "at_risk";
     breakdown: ScoreBreakdown;
   };
+  score_reliability_note: string | null;
   confidence: "High Confidence" | "Medium Confidence" | "Low Confidence / Cannot Fully Verify";
   plain_english_verdict: string;
   top_risks: ReportAlert[];
@@ -96,6 +98,7 @@ export type HealthCheckReport = {
     detected_customer_or_producer_names: string[];
     detected_carrier_or_supplier_names: string[];
     detected_destination_or_facility_names: string[];
+    detected_site_address_names: string[];
     unclear_entity_names: string[];
     unmatched_business_names: string[];
   };
@@ -513,7 +516,8 @@ function mergeDeductions(
   return {
     starting_score: base.starting_score,
     deductions,
-    final_score: final
+    final_score: final,
+    notes: base.notes ?? []
   };
 }
 
@@ -624,6 +628,57 @@ function overallAssessment(params: {
   if (params.confidence.startsWith("Low")) return "Evidence pack cannot be reliably assessed";
   if (params.crossConflicts > 0) return "Evidence pack needs review";
   return "Evidence pack appears usable";
+}
+
+function mixedBusinessPrimaryActions() {
+  return [
+    "Remove documents that do not belong to this business and rerun the health check.",
+    "Keep only matching WTN, invoice, carrier licence and contract evidence for the business being checked.",
+    "Re-upload clearer copies of any relevant documents that failed processing."
+  ];
+}
+
+export function mixedBusinessPrimaryActionsForTest() {
+  return mixedBusinessPrimaryActions();
+}
+
+function applyMixedBusinessRiskOverride(risks: ReportAlert[]) {
+  const keyRiskPriority = ["multi_business_pack", "future_dated_documents", "stale_wtn"];
+  const demoted = risks.map((risk) => {
+    const isCarrierConflict = (risk.rule_id ?? "").toLowerCase() === "conflicting_waste_carriers";
+    if (!isCarrierConflict) return risk;
+    return {
+      ...risk,
+      severity: "low" as const,
+      description: "Carrier inconsistencies were detected, but these may be caused by mixed-business documents."
+    };
+  });
+  const prioritized = [
+    ...demoted.filter((r) => (r.rule_id ?? "") === "multi_business_pack"),
+    ...demoted.filter((r) => (r.rule_id ?? "") !== "multi_business_pack")
+  ].filter((risk) => {
+    const key = (risk.rule_id ?? "").toLowerCase();
+    if (keyRiskPriority.includes(key)) return true;
+    if (risk.title.toLowerCase().includes("processing") || risk.title.toLowerCase().includes("unreadable")) return true;
+    return false;
+  });
+  return prioritized.slice(0, 4);
+}
+
+export function applyMixedBusinessRiskOverrideForTest(risks: ReportAlert[]) {
+  return applyMixedBusinessRiskOverride(risks);
+}
+
+function mixedBusinessScoreReliabilityNote() {
+  return "Low - document pack appears to contain multiple businesses";
+}
+
+export function mixedBusinessScoreReliabilityNoteForTest() {
+  return mixedBusinessScoreReliabilityNote();
+}
+
+export function scoreReliabilityNoteForTest(mixedBusinessHighRisk: boolean) {
+  return mixedBusinessHighRisk ? mixedBusinessScoreReliabilityNote() : null;
 }
 
 function isBusinessRelevantRisk(alert: ReportAlert) {
@@ -800,6 +855,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
       produces_hazardous_waste: business.produces_hazardous_waste
     }
   });
+  const mixedBusinessHighRisk = entityValidation.finding?.status === "fail";
   const missingDocs: string[] = [];
   if (checks.find((c) => c.check_name === "Waste Transfer Note present")?.result === "fail") missingDocs.push("Waste transfer note");
   if (checks.find((c) => c.check_name === "Carrier licence evidence present")?.result === "fail") missingDocs.push("Carrier licence evidence");
@@ -853,6 +909,9 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   const businessActionsOnly = recommendedActions.filter(
     (action) => !/missing_fields|ewc_code_or_licence_number|document_type|no action required|no immediate action/i.test(action.toLowerCase())
   );
+  const finalActions = mixedBusinessHighRisk
+    ? mixedBusinessPrimaryActions()
+    : businessActionsOnly;
 
   const baseScore = scoreFromChecks({ checks, docs, business });
   const mergedBreakdown = mergeDeductions(
@@ -860,8 +919,9 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     [...cross.score_deductions, ...(entityValidation.finding ? [{ reason: entityValidation.finding.title, points: entityValidation.finding.points }] : [])]
   );
   let mergedScore = mergedBreakdown.final_score;
-  if (entityValidation.finding?.status === "fail") {
+  if (mixedBusinessHighRisk) {
     mergedScore = Math.min(mergedScore, 49);
+    mergedBreakdown.notes = Array.from(new Set([...(mergedBreakdown.notes ?? []), "Score capped because documents may belong to multiple businesses."]));
   }
   const score = {
     score: mergedScore,
@@ -876,7 +936,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     cannotVerifyCount: cannotVerify.size + cross.confidence_adjustments.length,
     crossFindings: cross.consistency_findings
   });
-  const finalConfidence = entityValidation.finding?.status === "fail" ? "Low Confidence / Cannot Fully Verify" : confidence;
+  const finalConfidence = mixedBusinessHighRisk ? "Low Confidence / Cannot Fully Verify" : confidence;
 
   const confidenceContributors = [
     `Baseline evidence checks: ${checks.filter((c) => c.result === "pass").length}/${checks.length} passed`,
@@ -898,16 +958,8 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     }
     return true;
   });
-  if (entityValidation.finding?.status === "fail") {
-    businessRisks = businessRisks.map((risk) => {
-      const isCarrierConflict = (risk.rule_id ?? "").toLowerCase() === "conflicting_waste_carriers";
-      if (!isCarrierConflict) return risk;
-      return {
-        ...risk,
-        severity: "low",
-        description: "Carrier inconsistencies were detected, but these may be caused by mixed-business documents."
-      };
-    });
+  if (mixedBusinessHighRisk) {
+    businessRisks = applyMixedBusinessRiskOverride(businessRisks);
   }
   if (entityValidation.finding) {
     businessRisks.unshift({
@@ -950,30 +1002,32 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
       sites_count: business.sites_count
     },
     score,
+    score_reliability_note: mixedBusinessHighRisk ? mixedBusinessScoreReliabilityNote() : null,
     confidence: finalConfidence,
     plain_english_verdict:
-      entityValidation.finding?.status === "fail"
+      mixedBusinessHighRisk
         ? verdictForMixedBusinessPack()
         : verdict(finalConfidence, score.status, missingDocs.length),
-    top_risks: businessRisks.filter(isBusinessRelevantRisk).slice(0, 5),
+    top_risks: businessRisks.filter(isBusinessRelevantRisk).slice(0, mixedBusinessHighRisk ? 4 : 5),
     missing_documents: missingDocs,
     compliance_checks: checks,
     documents: docs,
     references: refs,
     cannot_verify: Array.from(cannotVerify),
-    recommended_actions: businessActionsOnly,
+    recommended_actions: finalActions,
     consistency_findings: cross.consistency_findings,
     confidence_contributors: confidenceContributors,
     documents_not_used: notUsedDocs.map((d) => ({ file_name: d.file_name, reason: d.reason })),
     consistency_summary: buildConsistencySummary(docs, cross.consistency_findings, {
       carriersDetected: entityValidation.carrier_names,
-      destinationsDetected: entityValidation.destination_names
+      destinationsDetected: [...entityValidation.destination_names, ...entityValidation.site_address_names]
     }),
     entity_matching: {
       onboarded_business_name: business.name,
       detected_customer_or_producer_names: entityValidation.producer_names,
       detected_carrier_or_supplier_names: entityValidation.carrier_names,
       detected_destination_or_facility_names: entityValidation.destination_names,
+      detected_site_address_names: entityValidation.site_address_names,
       unclear_entity_names: entityValidation.unclear_entity_names,
       unmatched_business_names: entityValidation.unmatched_producer_names
     },

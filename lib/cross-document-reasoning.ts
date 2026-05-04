@@ -1,5 +1,5 @@
 import type { ReportDocument, ReportAlert } from "@/lib/health-check-report";
-import { carrierRoleNames, producerRoleNames } from "@/lib/entity-pack-validation";
+import { carrierRoleNames, destinationRoleNames, producerRoleNames, siteAddressRoleNames } from "@/lib/entity-pack-validation";
 
 type BusinessInfo = {
   produces_food_waste: boolean | null;
@@ -92,6 +92,18 @@ export function runCrossDocumentReasoning(params: {
       const payload = (d.ai_extracted_json ?? {}) as Record<string, unknown>;
       const carriers = carrierRoleNames(payload, d.document_type, d.extracted_supplier);
       return carriers.map((carrier) => ({ doc: d, carrier }));
+    })
+    .filter((entry) => {
+      const payload = (entry.doc.ai_extracted_json ?? {}) as Record<string, unknown>;
+      const destinationSet = new Set(destinationRoleNames(payload).map((name) => normalizeName(name)));
+      const producerSet = new Set(producerRoleNames(payload).map((name) => normalizeName(name)));
+      const siteSet = new Set(siteAddressRoleNames(payload).map((name) => normalizeName(name)));
+      const n = normalizeName(entry.carrier);
+      if (!n) return false;
+      if (destinationSet.has(n)) return false;
+      if (producerSet.has(n)) return false;
+      if (siteSet.has(n)) return false;
+      return true;
     })
     .filter((x) => normalizeName(x.carrier));
 

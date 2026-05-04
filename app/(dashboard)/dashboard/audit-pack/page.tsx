@@ -64,6 +64,9 @@ export default async function AuditPackPage() {
 
   const liveReport = await buildHealthCheckReportForBusiness({ businessId: business.id, userId: user.id });
   const report = useLockedSnapshot ? (latestLocked?.final_report as typeof liveReport) : liveReport;
+  const mixedBusinessMode =
+    report.overall_assessment === "Documents appear to belong to multiple businesses" ||
+    report.top_risks.some((risk) => (risk.rule_id ?? "").toLowerCase() === "multi_business_pack");
 
   return (
     <div className="space-y-6 print:space-y-4">
@@ -85,6 +88,7 @@ export default async function AuditPackPage() {
           <p><span className="font-semibold">Documents reviewed:</span> {report.documents.length}</p>
           <p><span className="font-semibold">Sites:</span> {report.business.sites_count ?? "Not provided"}</p>
           <p><span className="font-semibold">Compliance score:</span> {report.score.score}/100</p>
+          {report.score_reliability_note ? <p><span className="font-semibold">Score reliability:</span> {report.score_reliability_note}</p> : null}
           <p><span className="font-semibold">Status:</span> {report.score.status}</p>
           <p><span className="font-semibold">Confidence:</span> {report.confidence}</p>
         </div>
@@ -117,6 +121,9 @@ export default async function AuditPackPage() {
           {report.score.breakdown.deductions.length ? report.score.breakdown.deductions.map((d) => (
             <p key={`${d.reason}-${d.points}`}>- {d.reason}: -{d.points}</p>
           )) : <p>No deductions applied.</p>}
+          {report.score.breakdown.notes?.map((note) => (
+            <p key={note} className="text-amber-700">{note}</p>
+          ))}
           <p className="font-semibold text-slate-900">Final score: {report.score.breakdown.final_score}</p>
         </div>
       </section>
@@ -152,6 +159,9 @@ export default async function AuditPackPage() {
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm print:shadow-none">
         <h2 className="text-lg font-semibold text-slate-900">Cross-Document Consistency</h2>
+        {mixedBusinessMode ? (
+          <p className="mt-2 text-sm text-amber-700">Additional findings detected after mixed-business warning. These findings may be unreliable until unrelated documents are removed.</p>
+        ) : null}
         <div className="mt-3 space-y-3 text-sm">
           {report.consistency_findings.length ? report.consistency_findings.map((finding) => (
             <article key={finding.key} className="rounded-md border border-slate-200 p-3">
@@ -181,6 +191,7 @@ export default async function AuditPackPage() {
         <div className="mt-3 space-y-1 text-sm text-slate-700">
           <p><span className="font-semibold">Onboarded business:</span> {report.entity_matching.onboarded_business_name ?? "Not provided"}</p>
           <p><span className="font-semibold">Detected customer/producer names:</span> {report.entity_matching.detected_customer_or_producer_names.length ? report.entity_matching.detected_customer_or_producer_names.join(", ") : "None detected"}</p>
+          <p><span className="font-semibold">Detected site/address names:</span> {report.entity_matching.detected_site_address_names.length ? report.entity_matching.detected_site_address_names.join(", ") : "None detected"}</p>
           <p><span className="font-semibold">Detected carrier/supplier names:</span> {report.entity_matching.detected_carrier_or_supplier_names.length ? report.entity_matching.detected_carrier_or_supplier_names.join(", ") : "None detected"}</p>
           <p><span className="font-semibold">Detected destination/facility names:</span> {report.entity_matching.detected_destination_or_facility_names.length ? report.entity_matching.detected_destination_or_facility_names.join(", ") : "None detected"}</p>
           <p><span className="font-semibold">Unclear entities:</span> {report.entity_matching.unclear_entity_names.length ? report.entity_matching.unclear_entity_names.join(", ") : "None detected"}</p>

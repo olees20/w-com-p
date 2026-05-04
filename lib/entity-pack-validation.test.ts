@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { carrierRoleNames, producerRoleNames, validateSingleBusinessPack } from "@/lib/entity-pack-validation";
+import { carrierRoleNames, isLikelyAddress, producerRoleNames, validateSingleBusinessPack } from "@/lib/entity-pack-validation";
 import type { ReportDocument } from "@/lib/health-check-report";
 
 const mkDoc = (overrides: Partial<ReportDocument>): ReportDocument => ({
@@ -180,4 +180,25 @@ test("known site names count as match for mixed-business threshold", () => {
   });
 
   assert.equal(result.finding, null);
+});
+
+test("detects UK-style addresses and does not treat them as producer names", () => {
+  assert.equal(isLikelyAddress("18 Market Street, York, YO1 8AA"), true);
+  assert.equal(isLikelyAddress("Unit A, 10 King Street, Leeds"), true);
+  assert.equal(isLikelyAddress("44 Industrial Estate, Wakefield"), true);
+  assert.equal(isLikelyAddress("5 Copy Lane, York"), true);
+
+  const payload = {
+    producer_name: "Northgate Bakery Ltd",
+    current_holder_address: "18 Market Street, York, YO1 8AA"
+  } as Record<string, unknown>;
+  const producers = producerRoleNames(payload);
+  assert.ok(producers.includes("Northgate Bakery Ltd"));
+  assert.ok(!producers.includes("18 Market Street, York, YO1 8AA"));
+});
+
+test("does not classify normal business names as addresses", () => {
+  assert.equal(isLikelyAddress("Northgate Bakery Ltd"), false);
+  assert.equal(isLikelyAddress("Riverside Cafe Limited"), false);
+  assert.equal(isLikelyAddress("Oak Table Restaurant Group"), false);
 });

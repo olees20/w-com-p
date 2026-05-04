@@ -76,6 +76,9 @@ export default async function ResultsPage() {
   const report = useLockedSnapshot ? (latestLocked?.final_report as typeof liveReport) : liveReport;
 
   const badge = scoreBadge(report.score.status);
+  const mixedBusinessMode =
+    report.overall_assessment === "Documents appear to belong to multiple businesses" ||
+    report.top_risks.some((risk) => (risk.rule_id ?? "").toLowerCase() === "multi_business_pack");
 
   return (
     <div className="space-y-5">
@@ -101,6 +104,7 @@ export default async function ResultsPage() {
           <div className="rounded-lg border border-[#E5E7EB] p-3">
             <p className="text-xs uppercase text-[#6B7280]">Compliance score</p>
             <p className="text-3xl font-extrabold text-[#111827]">{report.score.score}<span className="block text-xs font-semibold text-[#6B7280]">/100</span></p>
+            {report.score_reliability_note ? <p className="mt-1 text-xs text-amber-700">Score reliability: {report.score_reliability_note}</p> : null}
           </div>
           <div className="rounded-lg border border-[#E5E7EB] p-3">
             <p className="text-xs uppercase text-[#6B7280]">Status</p>
@@ -143,6 +147,9 @@ export default async function ResultsPage() {
           {report.score.breakdown.deductions.length ? report.score.breakdown.deductions.map((d) => (
             <p key={`${d.reason}-${d.points}`} className="text-[#374151]">- {d.reason}: -{d.points}</p>
           )) : <p className="text-[#6B7280]">No deductions applied.</p>}
+          {report.score.breakdown.notes?.map((note) => (
+            <p key={note} className="text-amber-700">{note}</p>
+          ))}
           <p className="font-semibold text-[#111827]">Final score: {report.score.breakdown.final_score}</p>
         </div>
       </section>
@@ -178,6 +185,9 @@ export default async function ResultsPage() {
 
       <section className="app-panel p-5">
         <h2 className="text-lg font-bold text-[#111827]">Cross-Document Consistency</h2>
+        {mixedBusinessMode ? (
+          <p className="mt-2 text-sm text-amber-700">Additional findings detected after mixed-business warning. These findings may be unreliable until unrelated documents are removed.</p>
+        ) : null}
         <div className="mt-3 space-y-3">
           {report.consistency_findings.length ? report.consistency_findings.map((finding) => (
             <article key={finding.key} className="rounded-lg border border-[#E5E7EB] p-3 text-sm">
@@ -208,6 +218,7 @@ export default async function ResultsPage() {
         <div className="mt-3 space-y-2 text-sm text-[#374151]">
           <p><span className="font-semibold">Onboarded business:</span> {report.entity_matching.onboarded_business_name ?? "Not provided"}</p>
           <p><span className="font-semibold">Detected customer/producer names:</span> {report.entity_matching.detected_customer_or_producer_names.length ? report.entity_matching.detected_customer_or_producer_names.join(", ") : "None detected"}</p>
+          <p><span className="font-semibold">Detected site/address names:</span> {report.entity_matching.detected_site_address_names.length ? report.entity_matching.detected_site_address_names.join(", ") : "None detected"}</p>
           <p><span className="font-semibold">Detected carrier/supplier names:</span> {report.entity_matching.detected_carrier_or_supplier_names.length ? report.entity_matching.detected_carrier_or_supplier_names.join(", ") : "None detected"}</p>
           <p><span className="font-semibold">Detected destination/facility names:</span> {report.entity_matching.detected_destination_or_facility_names.length ? report.entity_matching.detected_destination_or_facility_names.join(", ") : "None detected"}</p>
           <p><span className="font-semibold">Unclear entities:</span> {report.entity_matching.unclear_entity_names.length ? report.entity_matching.unclear_entity_names.join(", ") : "None detected"}</p>

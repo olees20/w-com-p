@@ -15,10 +15,19 @@ export type EntityValidationResult = {
   producer_names: string[];
   carrier_names: string[];
   destination_names: string[];
+  site_address_names: string[];
   unclear_entity_names: string[];
   unmatched_producer_names: string[];
   match_ratio: number;
 };
+
+export type EntityRole =
+  | "producer_customer"
+  | "carrier_supplier"
+  | "destination_facility"
+  | "site_address"
+  | "licence_number"
+  | "unclear";
 
 function normalizeName(value: string | null | undefined) {
   return (value ?? "")
@@ -34,6 +43,24 @@ function unique(values: string[]) {
   return Array.from(new Set(values.filter((v) => v.trim())));
 }
 
+export function isLikelyAddress(value: string | null | undefined) {
+  if (!value) return false;
+  const text = value.trim();
+  if (!text) return false;
+  const postcodePattern = /\b[A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2}\b/i;
+  const unitPattern = /\bunit\s+[a-z0-9]+\b/i;
+  const numericStreetPrefix = /^\s*\d+[a-z]?\s+/i;
+  const streetKeywordPattern =
+    /\b(street|road|lane|avenue|drive|way|industrial estate|business park|high street|market street|bishopthorpe road|mill road)\b/i;
+
+  if (postcodePattern.test(text)) return true;
+  if (unitPattern.test(text)) return true;
+  if (numericStreetPrefix.test(text) && streetKeywordPattern.test(text)) return true;
+  if (streetKeywordPattern.test(text) && /,/.test(text)) return true;
+
+  return false;
+}
+
 function extractNamesFromUnknown(value: unknown): string[] {
   if (typeof value === "string") return value.trim() ? [value.trim()] : [];
   if (Array.isArray(value)) return value.flatMap((v) => extractNamesFromUnknown(v));
@@ -42,6 +69,33 @@ function extractNamesFromUnknown(value: unknown): string[] {
 
 function pickRoleNames(payload: Record<string, unknown>, keys: string[]) {
   return unique(keys.flatMap((k) => extractNamesFromUnknown(payload[k])));
+}
+
+export function destinationRoleNames(payload: Record<string, unknown>) {
+  return pickRoleNames(payload, [
+    "destination",
+    "destination_name",
+    "waste_destination",
+    "disposal_site",
+    "receiving_facility",
+    "treatment_facility",
+    "transfer_station",
+    "facility",
+    "destination_address"
+  ]);
+}
+
+export function siteAddressRoleNames(payload: Record<string, unknown>) {
+  const explicit = pickRoleNames(payload, ["site_address", "collection_address", "address"]).filter((name) => isLikelyAddress(name));
+  const broad = pickRoleNames(payload, [
+    "premises",
+    "from",
+    "collected_from",
+    "transfer_address",
+    "section_d_transfer_address",
+    "current_holder_address"
+  ]).filter((name) => isLikelyAddress(name));
+  return unique([...explicit, ...broad]);
 }
 
 export function producerRoleNames(payload: Record<string, unknown>) {
@@ -64,7 +118,7 @@ export function producerRoleNames(payload: Record<string, unknown>) {
     "business_name",
     "invoice_recipient",
     "recipient"
-  ]);
+  ]).filter((name) => !isLikelyAddress(name));
 }
 
 export function carrierRoleNames(payload: Record<string, unknown>, documentType: string | null, extractedSupplier: string | null) {
@@ -86,7 +140,18 @@ export function carrierRoleNames(payload: Record<string, unknown>, documentType:
   };
 
   const keys = explicitCarrierKeysByType[documentType ?? ""] ?? ["carrier_name", "carrier", "supplier_name", "supplier", "contractor", "provider"];
-  const explicit = pickRoleNames(payload, keys);
+  const producerSet = new Set(producerRoleNames(payload).map((v) => normalizeName(v)));
+  const destinationSet = new Set(destinationRoleNames(payload).map((v) => normalizeName(v)));
+  const addressSet = new Set(siteAddressRoleNames(payload).map((v) => normalizeName(v)));
+
+  const explicit = pickRoleNames(payload, keys).filter((name) => {
+    const n = normalizeName(name);
+    if (!n) return false;
+    if (producerSet.has(n)) return false;
+    if (destinationSet.has(n)) return false;
+    if (addressSet.has(n)) return false;
+    return true;
+  });
   if (explicit.length) return explicit;
 
   // fallback is only allowed for roles where extracted supplier is likely to be provider-side
@@ -98,8 +163,8 @@ export function carrierRoleNames(payload: Record<string, unknown>, documentType:
   // fallback to extracted supplier only when no explicit producer/client role collides
   if (extractedSupplier?.trim()) {
     const supplier = extractedSupplier.trim();
-    const producerSet = new Set(producerRoleNames(payload).map((v) => normalizeName(v)));
-    if (!producerSet.has(normalizeName(supplier))) {
+    const normalizedSupplier = normalizeName(supplier);
+    if (!producerSet.has(normalizedSupplier) && !destinationSet.has(normalizedSupplier) && !addressSet.has(normalizedSupplier)) {
       return [supplier];
     }
   }
@@ -115,28 +180,42 @@ export function validateSingleBusinessPack(params: {
   const producerCandidates: string[] = [];
   const carrierCandidates: string[] = [];
   const destinationCandidates: string[] = [];
+  const siteAddressCandidates: string[] = [];
   const unclearCandidates: string[] = [];
 
   for (const doc of processed) {
     const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
 
-    const producers = producerRoleNames(payload);
+    const rawProducers = pickRoleNames(payload, [
+      "producer_name",
+      "customer_name",
+      "client_name",
+      "current_holder",
+      "transferor",
+      "site_name",
+      "client",
+      "customer",
+      "producer",
+      "waste_producer",
+      "premises",
+      "collection_point_business",
+      "site_business",
+      "from",
+      "collected_from",
+      "business_name",
+      "invoice_recipient",
+      "recipient"
+    ]);
+    const producers = rawProducers.filter((value) => !isLikelyAddress(value));
+    const producerAddresses = rawProducers.filter((value) => isLikelyAddress(value));
     const carriers = carrierRoleNames(payload, doc.document_type, doc.extracted_supplier);
 
-    const destinations = pickRoleNames(payload, [
-      "destination",
-      "disposal_site",
-      "waste_destination",
-      "facility",
-      "treatment_facility",
-      "receiving_facility",
-      "destination_name",
-      "destination_address"
-    ]);
+    const destinations = destinationRoleNames(payload);
 
     producerCandidates.push(...producers);
     carrierCandidates.push(...carriers);
     destinationCandidates.push(...destinations);
+    siteAddressCandidates.push(...producerAddresses, ...siteAddressRoleNames(payload));
 
     const unclearFromPayload = pickRoleNames(payload, ["business_name", "company_name", "organisation_name", "entity_name", "name"]);
     const knownSet = new Set(
@@ -167,6 +246,7 @@ export function validateSingleBusinessPack(params: {
     })
   );
   const destinationNames = unique(destinationCandidates);
+  const siteAddressNames = unique(siteAddressCandidates);
   const unclearEntityNames = unique(unclearCandidates);
 
   const normalizedKnownSites = (params.knownSiteNames ?? []).map((name) => normalizeName(name)).filter(Boolean);
@@ -211,6 +291,7 @@ export function validateSingleBusinessPack(params: {
     producer_names: producerNames,
     carrier_names: carrierNames,
     destination_names: destinationNames,
+    site_address_names: siteAddressNames,
     unclear_entity_names: unclearEntityNames,
     unmatched_producer_names: unmatched,
     match_ratio: matchRatio

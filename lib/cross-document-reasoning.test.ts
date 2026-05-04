@@ -240,3 +240,45 @@ test("does not treat producer/client names as carriers", () => {
 
   assert.ok(!result.consistency_findings.some((f) => f.key === "conflicting_waste_carriers"));
 });
+
+test("carrier conflict evidence excludes destination/facility entities", () => {
+  const result = runCrossDocumentReasoning({
+    business: { produces_food_waste: false, produces_hazardous_waste: false },
+    openAlerts: [],
+    documents: [
+      {
+        ...baseDoc,
+        id: "1",
+        file_name: "01_clean_valid_wtn.pdf",
+        document_type: "waste_transfer_note",
+        extracted_supplier: "GreenCycle Waste Ltd",
+        extracted_date: "2026-03-14",
+        extracted_licence_number: "CBDU123456",
+        ai_extracted_json: {
+          producer_name: "Northgate Bakery Ltd",
+          carrier_name: "GreenCycle Waste Ltd",
+          destination: "Leeds Waste Processing Facility"
+        } as unknown as { missing_fields?: string[] }
+      },
+      {
+        ...baseDoc,
+        id: "2",
+        file_name: "02_wtn_other_carrier.pdf",
+        document_type: "waste_transfer_note",
+        extracted_supplier: "York Waste Services Ltd",
+        extracted_date: "2026-03-14",
+        extracted_licence_number: "CBDU555555",
+        ai_extracted_json: {
+          producer_name: "Northgate Bakery Ltd",
+          carrier_name: "York Waste Services Ltd",
+          destination: "York Transfer Station"
+        } as unknown as { missing_fields?: string[] }
+      }
+    ]
+  });
+
+  const conflict = result.consistency_findings.find((f) => f.key === "conflicting_waste_carriers");
+  assert.ok(conflict);
+  assert.ok(conflict?.evidence.some((line) => line.includes("GreenCycle Waste Ltd")));
+  assert.ok(!conflict?.evidence.some((line) => line.includes("Leeds Waste Processing Facility")));
+});
