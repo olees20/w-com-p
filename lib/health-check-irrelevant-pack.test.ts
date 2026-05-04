@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildChecksForTest, classifyNotUsedDocumentsForTest, scoreFromChecksForTest, type ReportDocument } from "@/lib/health-check-report";
+import {
+  buildChecksForTest,
+  classifyNotUsedDocumentsForTest,
+  computeRelevantExtractionCompletenessForTest,
+  scoreFromChecksForTest,
+  type ReportDocument
+} from "@/lib/health-check-report";
 
 const mkIrrelevant = (file_name: string, summary: string): ReportDocument => ({
   id: Math.random().toString(36),
@@ -57,4 +63,36 @@ test("all-irrelevant pack marks docs as not used and fails baseline evidence che
   const notUsed = classifyNotUsedDocumentsForTest(docs, { produces_hazardous_waste: false });
   assert.equal(notUsed.length, 2);
   assert.ok(notUsed.every((d) => d.reason.toLowerCase().includes("unrelated")));
+});
+
+test("irrelevant content is excluded even when document_type looks like primary evidence", () => {
+  const docs: ReportDocument[] = [
+    {
+      ...mkIrrelevant("public_liability_invoice.pdf", "PUBLIC LIABILITY INSURANCE CERTIFICATE"),
+      document_type: "invoice",
+      ai_extracted_json: {
+        supplier: "InsureCo",
+        document_date: "2026-05-01",
+        missing_fields: []
+      }
+    }
+  ];
+
+  const checks = buildChecksForTest({
+    business: {
+      id: "b1",
+      name: "Bean & Brew Cafe Ltd",
+      business_type: "Cafe",
+      sites_count: 1,
+      produces_food_waste: false,
+      produces_hazardous_waste: false
+    },
+    docs
+  });
+
+  const invoiceCheck = checks.find((c) => c.check_name === "Waste invoice or collection evidence present");
+  assert.equal(invoiceCheck?.result, "fail");
+
+  const completeness = computeRelevantExtractionCompletenessForTest(docs);
+  assert.equal(completeness, 0);
 });

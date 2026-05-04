@@ -156,6 +156,7 @@ function isClearlyIrrelevantDocument(doc: ReportDocument) {
 }
 
 function classifyDocumentAssessmentRole(doc: ReportDocument): DocumentAssessmentRole {
+  if (isClearlyIrrelevantDocument(doc)) return "IRRELEVANT_NOT_USED";
   const type = (doc.document_type ?? "unknown").toLowerCase();
   if (["waste_transfer_note", "carrier_licence", "invoice", "contract", "hazardous_waste_note", "recycling_report"].includes(type)) {
     return "PRIMARY_EVIDENCE";
@@ -165,7 +166,7 @@ function classifyDocumentAssessmentRole(doc: ReportDocument): DocumentAssessment
     if (unknownRole === "supporting" || unknownRole === "ambiguous") return "SUPPORTING_EVIDENCE";
     return "IRRELEVANT_NOT_USED";
   }
-  return isClearlyIrrelevantDocument(doc) ? "IRRELEVANT_NOT_USED" : "SUPPORTING_EVIDENCE";
+  return "SUPPORTING_EVIDENCE";
 }
 
 function classifySupportingDocuments(docs: ReportDocument[]): SupportingDocument[] {
@@ -289,6 +290,9 @@ function isLowQualityReadable(doc: ReportDocument) {
 }
 
 function computeDocumentCompleteness(doc: ReportDocument) {
+  if (classifyDocumentAssessmentRole(doc) === "IRRELEVANT_NOT_USED") {
+    return { applicable: false, ratio: 0 };
+  }
   const docType = doc.document_type ?? "unknown";
   if (!(doc.processing_status === "processed" || doc.processing_status === "review")) {
     return { applicable: false, ratio: 0 };
@@ -1264,11 +1268,13 @@ function buildConsistencySummary(
   findings: ConsistencyFinding[],
   options?: { carriersDetected?: string[]; destinationsDetected?: string[] }
 ) {
-  const carriers = options?.carriersDetected ?? Array.from(new Set(docs.map((d) => d.extracted_supplier?.trim()).filter((v): v is string => !!v)));
-  const licenceNumbers = Array.from(new Set(docs.map((d) => d.extracted_licence_number?.trim()).filter((v): v is string => !!v)));
+  const assessableDocs = docs.filter((doc) => classifyDocumentAssessmentRole(doc) !== "IRRELEVANT_NOT_USED");
+  const carriers =
+    options?.carriersDetected ?? Array.from(new Set(assessableDocs.map((d) => d.extracted_supplier?.trim()).filter((v): v is string => !!v)));
+  const licenceNumbers = Array.from(new Set(assessableDocs.map((d) => d.extracted_licence_number?.trim()).filter((v): v is string => !!v)));
   const sites = Array.from(
     new Set(
-      docs
+      assessableDocs
         .map((d) => {
           const payload = (d.ai_extracted_json ?? {}) as Record<string, unknown>;
           const candidates = [payload.destination_address, payload.address, payload.site, payload.destination_name, payload.destination];
@@ -1277,7 +1283,7 @@ function buildConsistencySummary(
         .filter((v): v is string => !!v)
     )
   );
-  const dated = docs.map((d) => d.extracted_date).filter((v): v is string => !!v).sort();
+  const dated = assessableDocs.map((d) => d.extracted_date).filter((v): v is string => !!v).sort();
   const duplicateCount = findings.find((f) => f.key === "duplicate_documents")?.evidence.length ?? 0;
   return {
     carriers_detected: carriers,
