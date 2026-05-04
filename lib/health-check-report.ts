@@ -114,6 +114,8 @@ type NotUsedClassification = {
   category: "unrelated" | "unreadable" | "ambiguous" | "potentially_relevant_unreadable";
 };
 
+type UnknownDocRole = "supporting" | "irrelevant" | "ambiguous";
+
 function pluralize(count: number, singular: string, plural: string) {
   return count === 1 ? singular : plural;
 }
@@ -124,6 +126,18 @@ export function pluralizeForTest(count: number, singular: string, plural: string
 
 function hasText(v: string | null | undefined) {
   return Boolean(v && v.trim().length > 0);
+}
+
+function classifyUnknownDocumentRole(doc: ReportDocument): UnknownDocRole {
+  const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
+  const text = `${doc.file_name} ${doc.ai_summary ?? ""} ${JSON.stringify(payload)}`.toLowerCase();
+  const supportingSignals =
+    /(email|correspondence|service confirmation|confirmation|supplier update|collection confirmation|waste collection|licen[cs]e reference|carrier reference)/.test(
+      text
+    ) && /(waste|carrier|supplier|licen[cs]e|collection|service)/.test(text);
+  if (supportingSignals) return "supporting";
+  if (/(insurance|menu|receipt|bank statement|payroll|employment|cv)/.test(text)) return "irrelevant";
+  return "ambiguous";
 }
 
 function getJsonText(payload: Record<string, unknown>, keys: string[]) {
@@ -753,8 +767,6 @@ function confidenceFromSignals(params: {
   const cannotVerifyChecks = checks.filter((c) => c.result === "cannot_verify").length;
   const requiredFails = checks.filter((c) => ["Waste Transfer Note present", "Carrier licence evidence present", "Carrier licence valid / not expired", "Food waste evidence present", "Hazardous waste consignment note present"].includes(c.check_name) && c.result === "fail").length;
   const extractionCompleteness = computeRelevantExtractionCompleteness(docs);
-  const unknownCount = docs.filter((d) => d.document_type === "unknown").length;
-  const irrelevantRatio = docs.length === 0 ? 1 : unknownCount / docs.length;
   const duplicateCount = crossFindings.find((f) => f.key === "duplicate_documents")?.evidence.length ?? 0;
   const duplicateRatio = docs.length === 0 ? 0 : duplicateCount / docs.length;
   const hasMajorCarrierConflict = crossFindings.some((f) => f.key === "conflicting_waste_carriers" && f.severity === "high");
@@ -776,8 +788,7 @@ function confidenceFromSignals(params: {
     failed >= Math.max(1, Math.ceil(docs.length * 0.5)) ||
     highOnly >= 2 ||
     majorCrossConflictCount >= 2 ||
-    extractionCompleteness < 0.45 ||
-    irrelevantRatio > 0.5;
+    extractionCompleteness < 0.45;
 
   if (hardLow) {
     level = 1;
@@ -791,14 +802,13 @@ function confidenceFromSignals(params: {
       sourceCoverage >= 0.7 &&
       extractionCompleteness >= 0.7 &&
       baselinePassRate >= 0.95 &&
-      irrelevantRatio <= 0.15 &&
       duplicateRatio <= 0.2 &&
       majorCrossConflictCount === 0;
 
     level = highConfidenceCandidate ? 3 : 2;
   }
 
-  if (hasMajorCarrierConflict || hasLicenceMismatch || hasFutureDatedKey || hasStaleWtn || irrelevantRatio > 0.25 || duplicateRatio > 0.4) {
+  if (hasMajorCarrierConflict || hasLicenceMismatch || hasFutureDatedKey || hasStaleWtn || duplicateRatio > 0.4) {
     level = Math.max(1, level - 1) as 1 | 2 | 3;
   }
   if (lowQualityReadableCount > 0) {
@@ -830,8 +840,12 @@ function verdict(
   scoreStatus: HealthCheckReport["score"]["status"],
   missingCount: number,
   incompleteEvidence: boolean,
-  maintenanceOnlyExpiredNow: boolean
+  maintenanceOnlyExpiredNow: boolean,
+  hasHighSeverityRisk: boolean
 ) {
+  if (scoreStatus === "compliant" && !hasHighSeverityRisk) {
+    return "Based on the documents provided, compliance can be demonstrated.";
+  }
   if (maintenanceOnlyExpiredNow) {
     return "Based on the documents provided, no major evidence gaps or consistency issues were detected. However, the carrier licence evidence has expired since the transfer date, so updated evidence should be provided for ongoing compliance.";
   }
@@ -956,9 +970,10 @@ export function verdictForTest(
   scoreStatus: HealthCheckReport["score"]["status"],
   missingCount: number,
   incompleteEvidence: boolean,
-  maintenanceOnlyExpiredNow: boolean
+  maintenanceOnlyExpiredNow: boolean,
+  hasHighSeverityRisk: boolean
 ) {
-  return verdict(confidence, scoreStatus, missingCount, incompleteEvidence, maintenanceOnlyExpiredNow);
+  return verdict(confidence, scoreStatus, missingCount, incompleteEvidence, maintenanceOnlyExpiredNow, hasHighSeverityRisk);
 }
 
 function mixedBusinessPrimaryActions() {
@@ -1106,7 +1121,11 @@ function classifyNotUsedDocuments(docs: ReportDocument[], business: BusinessInfo
     }
 
     if (isUnknown) {
-      const likelyWasteRelated = /waste|carrier|licen[cs]e|invoice|transfer|consignment|recycl/i.test(doc.file_name.toLowerCase());
+      const role = classifyUnknownDocumentRole(doc);
+      if (role === "supporting") {
+        continue;
+      }
+      const likelyWasteRelated = role === "ambiguous" || /waste|carrier|licen[cs]e|invoice|transfer|consignment|recycl/i.test(doc.file_name.toLowerCase());
       out.push({
         file_name: doc.file_name,
         reason: likelyWasteRelated ? "Ambiguous document type" : "Unrelated to waste compliance",
@@ -1439,7 +1458,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     `Extraction completeness: ${Math.round(extractionCompleteness * 100)}%`,
     `Business-level risks (high/medium): ${businessRisks.filter((a) => a.severity === "high" || a.severity === "medium").length}`,
     `Cross-document ${pluralize(nonMaintenanceConsistencyFindings.length, "finding", "findings")}: ${nonMaintenanceConsistencyFindings.length}`,
-    `Irrelevant/unknown docs: ${docs.filter((d) => d.document_type === "unknown").length}/${docs.length}`,
+    `Irrelevant/unknown docs: ${docs.filter((d) => (d.document_type === "unknown") && classifyUnknownDocumentRole(d) !== "supporting").length}/${docs.length}`,
     `Duplicate docs flagged: ${nonMaintenanceConsistencyFindings.find((f) => f.key === "duplicate_documents")?.evidence.length ?? 0}`,
     `Source coverage: ${checks.filter((c) => !c.source_reference.startsWith("No source reference available")).length}/${checks.length}`
   ];
@@ -1481,9 +1500,9 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     (nonMaintenanceConsistencyFindings.some((f) => f.key.includes("licence")) || nonMaintenanceConsistencyFindings.some((f) => f.key.includes("future") || f.key.includes("stale")))
       ? "Date/licence evidence requires review"
       : "No major date/licence conflicts detected",
-    docs.filter((d) => d.document_type === "unknown").length > 0
-      ? `${docs.filter((d) => d.document_type === "unknown").length} unsupported ${pluralize(
-          docs.filter((d) => d.document_type === "unknown").length,
+    docs.filter((d) => d.document_type === "unknown" && classifyUnknownDocumentRole(d) !== "supporting").length > 0
+      ? `${docs.filter((d) => d.document_type === "unknown" && classifyUnknownDocumentRole(d) !== "supporting").length} unsupported ${pluralize(
+          docs.filter((d) => d.document_type === "unknown" && classifyUnknownDocumentRole(d) !== "supporting").length,
           "file was",
           "files were"
         )} excluded`
@@ -1506,7 +1525,14 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
         ? verdictForMixedBusinessPack()
         : pack04StyleFoodWasteIncomplete
           ? "Core waste evidence is present and internally consistent, but food waste evidence was expected based on the business profile and was not found. Upload food waste collection evidence or contract documentation before relying on this pack."
-          : verdict(finalConfidence, score.status, dedupedMissingDocs.length, incompleteEvidence, hasOnlyExpiredNowMaintenanceIssue),
+          : verdict(
+              finalConfidence,
+              score.status,
+              dedupedMissingDocs.length,
+              incompleteEvidence,
+              hasOnlyExpiredNowMaintenanceIssue,
+              businessRisks.some((r) => r.severity === "high")
+            ),
     top_risks: businessRisks.filter(isBusinessRelevantRisk).slice(0, mixedBusinessHighRisk ? 4 : 5),
     missing_documents: dedupedMissingDocs,
     compliance_checks: checks,
