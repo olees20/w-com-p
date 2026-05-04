@@ -463,35 +463,33 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
     )
   });
 
-  checks.push({
-    check_name: "Carrier licence valid / not expired",
-    result:
-      !carrierResolution.hasAnyCarrierEvidence
-        ? "cannot_verify"
-        : carrierResolution.hasValidMatchingWtn
+  if (carrierResolution.hasAnyCarrierEvidence) {
+    checks.push({
+      check_name: "Carrier licence valid / not expired",
+      result:
+        carrierResolution.hasValidMatchingWtn
           ? "pass"
           : carrierResolution.hasValidNow && !carrierResolution.wtnMismatch
             ? "pass"
             : carrierResolution.hasMixedEvidence || carrierResolution.validAtTransferButExpiredNow
               ? "attention_needed"
               : "fail",
-    evidence_used: carrierDocs.map((d) => `${d.file_name} (${d.expiry_date ?? "no expiry"})`),
-    affected_document: carrierDocs[0]?.file_name ?? null,
-    recommended_action:
-      !carrierResolution.hasAnyCarrierEvidence
-        ? "Upload carrier licence evidence."
-        : carrierResolution.hasValidMatchingWtn || (carrierResolution.hasValidNow && !carrierResolution.wtnMismatch)
+      evidence_used: carrierDocs.map((d) => `${d.file_name} (${d.expiry_date ?? "no expiry"})`),
+      affected_document: carrierDocs[0]?.file_name ?? null,
+      recommended_action:
+        carrierResolution.hasValidMatchingWtn || (carrierResolution.hasValidNow && !carrierResolution.wtnMismatch)
           ? "No immediate action."
           : carrierResolution.hasMixedEvidence
             ? "A valid licence appears to be present, but older expired licence evidence was also uploaded. Review which document should be relied on."
             : carrierResolution.validAtTransferButExpiredNow
               ? "Carrier licence may have been valid at the time of transfer but is expired now. Upload current evidence."
               : "Replace or renew expired carrier licence evidence.",
-    source_reference: resolveSourceReference(
-      "Carrier licence valid / not expired",
-      findReference(rules, sources, ["waste carrier licence environment agency", "public register waste carriers"])
-    )
-  });
+      source_reference: resolveSourceReference(
+        "Carrier licence valid / not expired",
+        findReference(rules, sources, ["waste carrier licence environment agency", "public register waste carriers"])
+      )
+    });
+  }
 
   checks.push({
     check_name: "Waste invoice or collection evidence present",
@@ -548,55 +546,57 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
     });
   }
 
-  const wtnWithDestination = wtDocs
-    .map((doc) => {
-      const destination = getDestinationEvidence(doc);
-      if (process.env.NODE_ENV !== "production") {
-        const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
-        console.log("[health-check][destination]", {
-          file: doc.file_name,
-          candidates: {
-            destination: payload.destination,
-            disposal_site: payload.disposal_site,
-            waste_destination: payload.waste_destination,
-            facility: payload.facility,
-            treatment_facility: payload.treatment_facility,
-            receiving_facility: payload.receiving_facility,
-            destination_name: payload.destination_name,
-            destination_address: payload.destination_address,
-            raw_text_excerpt: typeof payload.raw_text_excerpt === "string" ? payload.raw_text_excerpt.slice(0, 240) : null
-          },
-          finalDestination: destination
-        });
-      }
-      return { doc, destination };
-    })
-    .filter((entry) => hasText(entry.destination));
-  const hasDestinationCoverage = wtnWithDestination.length > 0;
-  checks.push({
-    check_name: "Waste destination present on WTN where available",
-    result: wtDocs.length === 0 ? "cannot_verify" : hasDestinationCoverage ? "pass" : "attention_needed",
-    evidence_used: wtnWithDestination.map((entry) => `${entry.doc.file_name} — ${entry.destination}`),
-    affected_document: wtDocs[0]?.file_name ?? null,
-    recommended_action: hasDestinationCoverage ? "No immediate action." : "Ensure destination details are visible on waste transfer records.",
-    source_reference: resolveSourceReference(
-      "Waste destination present on WTN where available",
-      findReference(rules, sources, ["waste transfer note business waste gov.uk", "waste duty of care gov.uk"])
-    )
-  });
+  if (wtDocs.length > 0) {
+    const wtnWithDestination = wtDocs
+      .map((doc) => {
+        const destination = getDestinationEvidence(doc);
+        if (process.env.NODE_ENV !== "production") {
+          const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
+          console.log("[health-check][destination]", {
+            file: doc.file_name,
+            candidates: {
+              destination: payload.destination,
+              disposal_site: payload.disposal_site,
+              waste_destination: payload.waste_destination,
+              facility: payload.facility,
+              treatment_facility: payload.treatment_facility,
+              receiving_facility: payload.receiving_facility,
+              destination_name: payload.destination_name,
+              destination_address: payload.destination_address,
+              raw_text_excerpt: typeof payload.raw_text_excerpt === "string" ? payload.raw_text_excerpt.slice(0, 240) : null
+            },
+            finalDestination: destination
+          });
+        }
+        return { doc, destination };
+      })
+      .filter((entry) => hasText(entry.destination));
+    const hasDestinationCoverage = wtnWithDestination.length > 0;
+    checks.push({
+      check_name: "Waste destination present on WTN where available",
+      result: hasDestinationCoverage ? "pass" : "attention_needed",
+      evidence_used: wtnWithDestination.map((entry) => `${entry.doc.file_name} — ${entry.destination}`),
+      affected_document: wtDocs[0]?.file_name ?? null,
+      recommended_action: hasDestinationCoverage ? "No immediate action." : "Ensure destination details are visible on waste transfer records.",
+      source_reference: resolveSourceReference(
+        "Waste destination present on WTN where available",
+        findReference(rules, sources, ["waste transfer note business waste gov.uk", "waste duty of care gov.uk"])
+      )
+    });
 
-  const wtnWithEwc = wtDocs.filter((d) => hasText(d.extracted_ewc_code));
-  checks.push({
-    check_name: "EWC code present on WTN where available",
-    result: wtDocs.length === 0 ? "cannot_verify" : wtnWithEwc.length ? "pass" : "attention_needed",
-    evidence_used: wtnWithEwc.map((d) => d.file_name),
-    affected_document: wtDocs[0]?.file_name ?? null,
-    recommended_action: wtnWithEwc.length ? "No immediate action." : "Upload WTN copies that include EWC code details.",
-    source_reference: resolveSourceReference(
-      "EWC code present on WTN where available",
-      findReference(rules, sources, ["ewc code waste transfer note", "waste transfer note guidance"])
-    )
-  });
+    const wtnWithEwc = wtDocs.filter((d) => hasText(d.extracted_ewc_code));
+    checks.push({
+      check_name: "EWC code present on WTN where available",
+      result: wtnWithEwc.length ? "pass" : "attention_needed",
+      evidence_used: wtnWithEwc.map((d) => d.file_name),
+      affected_document: wtDocs[0]?.file_name ?? null,
+      recommended_action: wtnWithEwc.length ? "No immediate action." : "Upload WTN copies that include EWC code details.",
+      source_reference: resolveSourceReference(
+        "EWC code present on WTN where available",
+        findReference(rules, sources, ["ewc code waste transfer note", "waste transfer note guidance"])
+      )
+    });
+  }
 
   if (failedDocs.length > 0) {
     checks.push({
@@ -610,6 +610,15 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
   }
 
   return checks;
+}
+
+export function buildChecksForTest(params: { business: BusinessInfo; docs: ReportDocument[]; rules?: RuleRef[]; sources?: SourceRef[] }) {
+  return buildChecks({
+    business: params.business,
+    docs: params.docs,
+    rules: params.rules ?? [],
+    sources: params.sources ?? []
+  });
 }
 
 function scoreFromChecks(params: { checks: BaselineCheck[]; docs: ReportDocument[]; business: BusinessInfo }) {
