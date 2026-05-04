@@ -1,0 +1,286 @@
+import type { ReportDocument, ReportAlert } from "@/lib/health-check-report";
+
+type BusinessInfo = {
+  produces_food_waste: boolean | null;
+  produces_hazardous_waste: boolean | null;
+};
+
+export type ConsistencyFinding = {
+  key: string;
+  title: string;
+  severity: "low" | "medium" | "high";
+  status: "info" | "attention_needed" | "fail";
+  message: string;
+  evidence: string[];
+  recommended_action: string;
+  points: number;
+  affects_confidence: boolean;
+  cannot_verify?: string;
+};
+
+export type CrossDocumentReasoningResult = {
+  consistency_findings: ConsistencyFinding[];
+  business_level_risks: ReportAlert[];
+  score_deductions: Array<{ reason: string; points: number }>;
+  confidence_adjustments: string[];
+  recommended_actions: string[];
+  cannot_verify_items: string[];
+};
+
+function normalizeName(value: string | null | undefined) {
+  return (value ?? "")
+    .toLowerCase()
+    .replace(/[.,]/g, "")
+    .replace(/\blimited\b/g, "ltd")
+    .replace(/\bltd\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getDestination(doc: ReportDocument) {
+  const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
+  const keys = [
+    "destination",
+    "disposal_site",
+    "waste_destination",
+    "facility",
+    "treatment_facility",
+    "receiving_facility",
+    "destination_name",
+    "destination_address"
+  ];
+  for (const key of keys) {
+    const v = payload[key];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return null;
+}
+
+function parseDate(v: string | null) {
+  if (!v) return null;
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return null;
+  return d;
+}
+
+function isComplianceDoc(doc: ReportDocument) {
+  return ["waste_transfer_note", "invoice", "carrier_licence", "contract", "hazardous_waste_note", "recycling_report"].includes(doc.document_type ?? "");
+}
+
+export function runCrossDocumentReasoning(params: {
+  documents: ReportDocument[];
+  openAlerts: ReportAlert[];
+  business: BusinessInfo;
+}): CrossDocumentReasoningResult {
+  const now = new Date();
+  const processedDocs = params.documents.filter((d) => d.processing_status === "processed");
+  const findings: ConsistencyFinding[] = [];
+
+  const carrierDocs = processedDocs
+    .filter((d) => ["waste_transfer_note", "invoice", "carrier_licence", "contract"].includes(d.document_type ?? ""))
+    .filter((d) => normalizeName(d.extracted_supplier));
+
+  const carriers = new Map<string, ReportDocument[]>();
+  for (const doc of carrierDocs) {
+    const key = normalizeName(doc.extracted_supplier);
+    const arr = carriers.get(key) ?? [];
+    arr.push(doc);
+    carriers.set(key, arr);
+  }
+
+  if (carriers.size > 1) {
+    const wtns = carrierDocs.filter((d) => d.document_type === "waste_transfer_note" && d.extracted_date);
+    const invoices = carrierDocs.filter((d) => d.document_type === "invoice" && d.extracted_date);
+    let sameDateConflict = false;
+    for (const wtn of wtns) {
+      for (const invoice of invoices) {
+        if (wtn.extracted_date === invoice.extracted_date && normalizeName(wtn.extracted_supplier) !== normalizeName(invoice.extracted_supplier)) {
+          sameDateConflict = true;
+        }
+      }
+    }
+
+    const evidence = carrierDocs.slice(0, 8).map((d) => `${d.file_name} -> ${d.extracted_supplier ?? "Unknown"}`);
+    findings.push({
+      key: "conflicting_waste_carriers",
+      title: "Conflicting waste carriers detected",
+      severity: sameDateConflict ? "high" : "medium",
+      status: sameDateConflict ? "fail" : "attention_needed",
+      message: "Different waste carriers or suppliers were found across the uploaded documents. This may make it harder to evidence a consistent waste disposal chain.",
+      evidence,
+      recommended_action:
+        "Confirm which carrier handled each waste transfer and upload matching WTN, invoice, licence and contract evidence.",
+      points: sameDateConflict ? 12 : 6,
+      affects_confidence: true
+    });
+  }
+
+  const wtnLicenceDocs = processedDocs.filter((d) => d.document_type === "waste_transfer_note" && (d.extracted_licence_number ?? "").trim());
+  const licenceEvidence = new Set(
+    processedDocs
+      .filter((d) => d.document_type === "carrier_licence" && (d.extracted_licence_number ?? "").trim())
+      .map((d) => (d.extracted_licence_number ?? "").trim().toLowerCase())
+  );
+
+  const mismatchedLicences = wtnLicenceDocs.filter((d) => !licenceEvidence.has((d.extracted_licence_number ?? "").trim().toLowerCase()));
+  if (mismatchedLicences.length) {
+    findings.push({
+      key: "licence_mismatch",
+      title: "Carrier licence evidence does not match WTN licence number",
+      severity: "medium",
+      status: "attention_needed",
+      message: "A licence number on one or more WTNs could not be matched to uploaded carrier licence evidence.",
+      evidence: mismatchedLicences.map((d) => `${d.file_name} -> ${(d.extracted_licence_number ?? "Unknown").trim()}`),
+      recommended_action: "Upload carrier licence evidence matching each WTN licence number.",
+      points: 15,
+      affects_confidence: true
+    });
+  }
+
+  const futureDated = processedDocs.filter(
+    (d) => ["waste_transfer_note", "invoice"].includes(d.document_type ?? "") && parseDate(d.extracted_date) && (parseDate(d.extracted_date) as Date) > now
+  );
+  if (futureDated.length) {
+    findings.push({
+      key: "future_dated_documents",
+      title: "Future-dated waste documents detected",
+      severity: "medium",
+      status: "attention_needed",
+      message: "Some waste document dates are in the future and should be verified.",
+      evidence: futureDated.map((d) => `${d.file_name} -> ${d.extracted_date}`),
+      recommended_action: "Verify document dates and replace incorrect files.",
+      points: 6,
+      affects_confidence: true
+    });
+  }
+
+  const carrierLicences = processedDocs.filter((d) => d.document_type === "carrier_licence");
+  const expiredBeforeWtn = wtnLicenceDocs.filter((wtn) => {
+    const wtnDate = parseDate(wtn.extracted_date);
+    if (!wtnDate) return false;
+    const linked = carrierLicences.find(
+      (c) => (c.extracted_licence_number ?? "").trim().toLowerCase() === (wtn.extracted_licence_number ?? "").trim().toLowerCase()
+    );
+    if (!linked) return false;
+    const exp = parseDate(linked.expiry_date);
+    return !!exp && exp < wtnDate;
+  });
+  if (expiredBeforeWtn.length) {
+    findings.push({
+      key: "licence_expired_before_transfer",
+      title: "WTN references a licence that was expired at transfer date",
+      severity: "high",
+      status: "fail",
+      message: "One or more WTNs appear to reference carrier evidence that was expired before the transfer date.",
+      evidence: expiredBeforeWtn.map((d) => `${d.file_name} -> ${d.extracted_date}`),
+      recommended_action: "Verify transfer records and upload valid carrier evidence for those dates.",
+      points: 12,
+      affects_confidence: true
+    });
+  }
+
+  const inconsistentLicenceState = processedDocs.filter((d) => d.document_type === "carrier_licence").filter((d) => {
+    const expiry = parseDate(d.expiry_date);
+    const activeText = `${d.ai_summary ?? ""} ${(d.ai_extracted_json ? JSON.stringify(d.ai_extracted_json) : "")}`;
+    return !!expiry && expiry < now && /status\\s*:?\\s*active|\\bactive\\b/i.test(activeText);
+  });
+  if (inconsistentLicenceState.length) {
+    findings.push({
+      key: "licence_internal_inconsistency",
+      title: "Licence evidence appears internally inconsistent",
+      severity: "medium",
+      status: "attention_needed",
+      message: "The document states active but the expiry date has passed.",
+      evidence: inconsistentLicenceState.map((d) => `${d.file_name} -> ${d.expiry_date ?? "unknown expiry"}`),
+      recommended_action: "Upload replacement licence evidence with clear current validity.",
+      points: 10,
+      affects_confidence: true
+    });
+  }
+
+  const staleWtn = processedDocs.filter((d) => d.document_type === "waste_transfer_note" && parseDate(d.extracted_date) && now.getTime() - (parseDate(d.extracted_date) as Date).getTime() > 365 * 24 * 60 * 60 * 1000);
+  if (staleWtn.length) {
+    findings.push({
+      key: "stale_wtn",
+      title: "WTN evidence appears stale",
+      severity: "medium",
+      status: "attention_needed",
+      message: "Some waste transfer notes are older than 12 months and may not evidence current arrangements.",
+      evidence: staleWtn.map((d) => `${d.file_name} -> ${d.extracted_date}`),
+      recommended_action: "Upload more recent waste transfer evidence for current operations.",
+      points: 6,
+      affects_confidence: true
+    });
+  }
+
+  const duplicateKeys = new Map<string, ReportDocument[]>();
+  for (const doc of processedDocs.filter((d) => d.document_type === "waste_transfer_note")) {
+    const key = [
+      doc.document_type,
+      doc.extracted_date ?? "",
+      normalizeName(doc.extracted_supplier),
+      doc.extracted_ewc_code ?? "",
+      normalizeName(getDestination(doc))
+    ].join("|");
+    const arr = duplicateKeys.get(key) ?? [];
+    arr.push(doc);
+    duplicateKeys.set(key, arr);
+  }
+
+  const duplicateGroups = Array.from(duplicateKeys.values()).filter((group) => group.length > 1);
+  if (duplicateGroups.length) {
+    findings.push({
+      key: "duplicate_documents",
+      title: "Duplicate document detected",
+      severity: "low",
+      status: "info",
+      message: "Likely duplicate documents were detected and are not counted as additional evidence.",
+      evidence: duplicateGroups.flatMap((g) => g.map((d) => d.file_name)),
+      recommended_action: "No action required unless duplicates were uploaded in error.",
+      points: 0,
+      affects_confidence: false
+    });
+  }
+
+  const irrelevantDocs = params.documents.filter((d) => d.document_type === "unknown");
+  if (irrelevantDocs.length) {
+    findings.push({
+      key: "irrelevant_documents",
+      title: "Irrelevant or unsupported document",
+      severity: "low",
+      status: "info",
+      message: "Some uploaded files do not appear to be waste compliance evidence.",
+      evidence: irrelevantDocs.map((d) => d.file_name),
+      recommended_action: "No action required unless this document was intended to evidence waste compliance.",
+      points: 0,
+      affects_confidence: false,
+      cannot_verify: "Some uploaded files were irrelevant or unsupported for compliance evidence."
+    });
+  }
+
+  const businessLevelRisks: ReportAlert[] = findings
+    .filter((f) => f.status !== "info")
+    .map((f, idx) => ({
+      id: `cross-${idx}-${f.key}`,
+      title: f.title,
+      description: f.message,
+      severity: f.severity,
+      status: "open",
+      rule_id: f.key,
+      document_id: null
+    }));
+
+  const recommendedActions = Array.from(new Set(findings.map((f) => f.recommended_action)));
+  const scoreDeductions = findings.filter((f) => f.points > 0).map((f) => ({ reason: f.title, points: f.points }));
+  const confidenceAdjustments = findings.filter((f) => f.affects_confidence).map((f) => f.title);
+  const cannotVerifyItems = Array.from(new Set(findings.map((f) => f.cannot_verify).filter((x): x is string => !!x)));
+
+  return {
+    consistency_findings: findings,
+    business_level_risks: businessLevelRisks,
+    score_deductions: scoreDeductions,
+    confidence_adjustments: confidenceAdjustments,
+    recommended_actions: recommendedActions,
+    cannot_verify_items: cannotVerifyItems
+  };
+}

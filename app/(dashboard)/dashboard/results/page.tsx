@@ -118,6 +118,15 @@ export default async function ResultsPage() {
       </section>
 
       <section className="app-panel p-5">
+        <h2 className="text-lg font-bold text-[#111827]">Confidence Contributors</h2>
+        <div className="mt-3 space-y-2">
+          {report.confidence_contributors.map((item) => (
+            <p key={item} className="text-sm text-[#374151]">- {item}</p>
+          ))}
+        </div>
+      </section>
+
+      <section className="app-panel p-5">
         <h2 className="text-lg font-bold text-[#111827]">Score Breakdown</h2>
         <div className="mt-3 space-y-2 text-sm">
           <p className="font-semibold text-[#111827]">Starting score: {report.score.breakdown.starting_score}</p>
@@ -158,6 +167,33 @@ export default async function ResultsPage() {
       </section>
 
       <section className="app-panel p-5">
+        <h2 className="text-lg font-bold text-[#111827]">Cross-Document Consistency</h2>
+        <div className="mt-3 space-y-3">
+          {report.consistency_findings.length ? report.consistency_findings.map((finding) => (
+            <article key={finding.key} className="rounded-lg border border-[#E5E7EB] p-3 text-sm">
+              <p className="font-semibold text-[#111827]">{finding.title}</p>
+              <p className="text-[#6B7280]">{finding.message}</p>
+              <p className="text-xs text-[#6B7280]"><span className="font-semibold">Severity:</span> {finding.severity.toUpperCase()}</p>
+              <p className="text-xs text-[#6B7280]"><span className="font-semibold">Status:</span> {finding.status}</p>
+              <p className="text-xs text-[#6B7280]"><span className="font-semibold">Evidence:</span> {finding.evidence.length ? finding.evidence.join(" | ") : "No evidence captured"}</p>
+              <p className="text-xs text-[#6B7280]"><span className="font-semibold">Action:</span> {finding.recommended_action}</p>
+            </article>
+          )) : <p className="text-sm text-[#6B7280]">No cross-document inconsistencies detected.</p>}
+        </div>
+      </section>
+
+      <section className="app-panel p-5">
+        <h2 className="text-lg font-bold text-[#111827]">Consistency Summary</h2>
+        <div className="mt-3 space-y-2 text-sm text-[#374151]">
+          <p><span className="font-semibold">Carriers detected:</span> {report.consistency_summary.carriers_detected.length ? report.consistency_summary.carriers_detected.join(", ") : "None detected"}</p>
+          <p><span className="font-semibold">Licence numbers detected:</span> {report.consistency_summary.licence_numbers_detected.length ? report.consistency_summary.licence_numbers_detected.join(", ") : "None detected"}</p>
+          <p><span className="font-semibold">Sites/addresses detected:</span> {report.consistency_summary.sites_or_addresses_detected.length ? report.consistency_summary.sites_or_addresses_detected.join(", ") : "None detected"}</p>
+          <p><span className="font-semibold">Document date range:</span> {report.consistency_summary.document_date_range.from ?? "N/A"} to {report.consistency_summary.document_date_range.to ?? "N/A"}</p>
+          <p><span className="font-semibold">Duplicate documents detected:</span> {report.consistency_summary.duplicate_documents_detected}</p>
+        </div>
+      </section>
+
+      <section className="app-panel p-5">
         <h2 className="text-lg font-bold text-[#111827]">Recommended Next Actions</h2>
         <div className="mt-3 space-y-2">
           {report.recommended_actions.length ? report.recommended_actions.map((action) => <p key={action} className="text-sm text-[#374151]">- {action}</p>) : <p className="text-sm text-[#6B7280]">No immediate action required.</p>}
@@ -168,6 +204,16 @@ export default async function ResultsPage() {
         <h2 className="text-lg font-bold text-[#111827]">Missing Documents</h2>
         <div className="mt-3 space-y-2">
           {report.missing_documents.length ? report.missing_documents.map((m) => <p key={m} className="text-sm text-[#374151]">- {m}</p>) : <p className="text-sm text-[#6B7280]">No major missing categories detected.</p>}
+        </div>
+      </section>
+
+      <section className="app-panel p-5">
+        <h2 className="text-lg font-bold text-[#111827]">Documents Not Used In The Assessment</h2>
+        <div className="mt-3 space-y-2">
+          {report.documents_not_used.length ? report.documents_not_used.map((d) => (
+            <p key={`${d.file_name}-${d.reason}`} className="text-sm text-[#374151]">- {d.file_name}: {d.reason}</p>
+          )) : <p className="text-sm text-[#6B7280]">All uploaded documents were used in the compliance assessment.</p>}
+          <p className="text-xs text-[#6B7280]">No action required unless these files were intended to evidence waste compliance.</p>
         </div>
       </section>
 

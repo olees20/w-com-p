@@ -96,6 +96,13 @@ export default async function AuditPackPage() {
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm print:shadow-none">
+        <h2 className="text-lg font-semibold text-slate-900">Confidence Contributors</h2>
+        <div className="mt-3 space-y-1 text-sm text-slate-700">
+          {report.confidence_contributors.map((item) => <p key={item}>- {item}</p>)}
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm print:shadow-none">
         <h2 className="text-lg font-semibold text-slate-900">Score Breakdown</h2>
         <div className="mt-3 space-y-1 text-sm text-slate-700">
           <p className="font-semibold text-slate-900">Starting score: {report.score.breakdown.starting_score}</p>
@@ -136,6 +143,32 @@ export default async function AuditPackPage() {
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm print:shadow-none">
+        <h2 className="text-lg font-semibold text-slate-900">Cross-Document Consistency</h2>
+        <div className="mt-3 space-y-3 text-sm">
+          {report.consistency_findings.length ? report.consistency_findings.map((finding) => (
+            <article key={finding.key} className="rounded-md border border-slate-200 p-3">
+              <p className="font-semibold text-slate-900">{finding.title}</p>
+              <p className="text-slate-700">{finding.message}</p>
+              <p className="text-xs text-slate-600">Severity: {finding.severity.toUpperCase()} | Status: {finding.status}</p>
+              <p className="text-xs text-slate-600">Evidence: {finding.evidence.length ? finding.evidence.join(" | ") : "No evidence captured"}</p>
+              <p className="text-xs text-slate-600">Recommended action: {finding.recommended_action}</p>
+            </article>
+          )) : <p className="text-slate-600">No cross-document inconsistencies detected.</p>}
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm print:shadow-none">
+        <h2 className="text-lg font-semibold text-slate-900">Consistency Summary</h2>
+        <div className="mt-3 space-y-1 text-sm text-slate-700">
+          <p><span className="font-semibold">Carriers detected:</span> {report.consistency_summary.carriers_detected.length ? report.consistency_summary.carriers_detected.join(", ") : "None detected"}</p>
+          <p><span className="font-semibold">Licence numbers detected:</span> {report.consistency_summary.licence_numbers_detected.length ? report.consistency_summary.licence_numbers_detected.join(", ") : "None detected"}</p>
+          <p><span className="font-semibold">Sites/addresses detected:</span> {report.consistency_summary.sites_or_addresses_detected.length ? report.consistency_summary.sites_or_addresses_detected.join(", ") : "None detected"}</p>
+          <p><span className="font-semibold">Document date range:</span> {report.consistency_summary.document_date_range.from ?? "N/A"} to {report.consistency_summary.document_date_range.to ?? "N/A"}</p>
+          <p><span className="font-semibold">Duplicate documents detected:</span> {report.consistency_summary.duplicate_documents_detected}</p>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm print:shadow-none">
         <h2 className="text-lg font-semibold text-slate-900">Recommended Next Actions</h2>
         <div className="mt-3 space-y-1 text-sm text-slate-700">
           {report.recommended_actions.length ? report.recommended_actions.map((action) => <p key={action}>- {action}</p>) : <p>No immediate action required.</p>}
@@ -146,6 +179,14 @@ export default async function AuditPackPage() {
         <h2 className="text-lg font-semibold text-slate-900">Missing Documents</h2>
         <div className="mt-3 space-y-1 text-sm text-slate-700">
           {report.missing_documents.length ? report.missing_documents.map((item) => <p key={item}>- {item}</p>) : <p>No major missing categories detected.</p>}
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm print:shadow-none">
+        <h2 className="text-lg font-semibold text-slate-900">Documents Not Used In The Assessment</h2>
+        <div className="mt-3 space-y-1 text-sm text-slate-700">
+          {report.documents_not_used.length ? report.documents_not_used.map((d) => <p key={`${d.file_name}-${d.reason}`}>- {d.file_name}: {d.reason}</p>) : <p>All uploaded documents were used in the compliance assessment.</p>}
+          <p className="text-xs text-slate-600">No action required unless these files were intended to evidence waste compliance.</p>
         </div>
       </section>
 
