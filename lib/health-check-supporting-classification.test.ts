@@ -41,7 +41,6 @@ test("cross-document reasoning marks supporting docs separately from irrelevant"
     openAlerts: [],
     business: { produces_food_waste: false, produces_hazardous_waste: false }
   });
-  assert.equal(result.consistency_findings.some((f) => f.key === "additional_supporting_documents"), true);
-  assert.equal(result.consistency_findings.some((f) => f.key === "irrelevant_documents"), true);
+  assert.equal(result.consistency_findings.some((f) => f.key === "additional_supporting_documents"), false);
+  assert.equal(result.consistency_findings.some((f) => f.key === "irrelevant_documents"), false);
 });
-

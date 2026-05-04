@@ -147,12 +147,24 @@ function classifyUnknownDocumentRole(doc: ReportDocument): UnknownDocRole {
 }
 
 function classifySupportingDocuments(docs: ReportDocument[]): SupportingDocument[] {
+  const reasonFromDoc = (doc: ReportDocument) => {
+    const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
+    const text = `${doc.file_name} ${doc.ai_summary ?? ""} ${JSON.stringify(payload)}`.toLowerCase();
+    const reasons: string[] = [];
+    if (/(supplier confirmation|supplier update|provider confirmation)/.test(text)) reasons.push("confirms supplier details");
+    if (/(licen[cs]e|registration number|carrier number|cbd[u0-9]+)/.test(text)) reasons.push("references carrier licence details");
+    if (/(waste service|waste collection|collection service|general waste|recycling collection|food waste)/.test(text)) reasons.push("confirms waste collection/services");
+    if (/(weekly|fortnightly|monthly|frequency)/.test(text)) reasons.push("confirms collection frequency");
+    if (!reasons.length) return "waste-related correspondence supporting primary evidence.";
+    return `${reasons.join(", ")}.`;
+  };
+
   return docs
     .filter((doc) => (doc.document_type ?? "unknown") === "unknown")
     .filter((doc) => classifyUnknownDocumentRole(doc) === "supporting")
     .map((doc) => ({
       file_name: doc.file_name,
-      reason: "Supplier/licence/service correspondence supporting primary evidence."
+      reason: reasonFromDoc(doc)
     }));
 }
 
