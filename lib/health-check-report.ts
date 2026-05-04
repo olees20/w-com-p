@@ -146,6 +146,14 @@ function classifyUnknownDocumentRole(doc: ReportDocument): UnknownDocRole {
   return "ambiguous";
 }
 
+function isClearlyIrrelevantDocument(doc: ReportDocument) {
+  const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
+  const text = `${doc.file_name} ${doc.document_type ?? ""} ${doc.ai_summary ?? ""} ${JSON.stringify(payload)}`.toLowerCase();
+  const irrelevantSignals = /(insurance|menu|restaurant menu|public liability|employers liability|bank statement|payroll|employment|cv|generic receipt)/.test(text);
+  const wasteSignals = /(waste|carrier|licen[cs]e|collection|ewc|consignment|transfer note|recycling|supplier|invoice|contract)/.test(text);
+  return irrelevantSignals && !wasteSignals;
+}
+
 function classifySupportingDocuments(docs: ReportDocument[]): SupportingDocument[] {
   const reasonFromDoc = (doc: ReportDocument) => {
     const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
@@ -506,7 +514,10 @@ export function extractDestinationFromEvidenceForTest(doc: Pick<ReportDocument, 
 function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; rules: RuleRef[]; sources: SourceRef[] }) {
   const { business, docs, rules, sources } = params;
 
-  const processed = docs.filter(isProcessed);
+  const relevantDocs = docs.filter((doc) => !isClearlyIrrelevantDocument(doc));
+  const hasAnyUploads = docs.length > 0;
+  const noRelevantEvidence = hasAnyUploads && relevantDocs.length === 0;
+  const processed = relevantDocs.filter(isProcessed);
   const wtDocs = processed.filter((d) => d.document_type === "waste_transfer_note");
   const carrierDocs = docs.filter(
     (d) => d.document_type === "carrier_licence" && (d.processing_status === "processed" || d.processing_status === "review") && hasValidCarrierLicenceFields(d)
@@ -519,13 +530,13 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
   const supplierRelationshipEvidence = [...invoiceDocs, ...wtDocs].filter((d) => hasText(getCarrierNameFromDoc(d)));
   const hasSupplierRelationshipEvidence = supplierRelationshipEvidence.length > 0;
   const hazDocs = processed.filter((d) => d.document_type === "hazardous_waste_note");
-  const failedDocs = docs.filter((d) => d.processing_status === "failed");
+  const failedDocs = relevantDocs.filter((d) => d.processing_status === "failed");
 
   const checks: BaselineCheck[] = [];
 
   checks.push({
     check_name: "Waste Transfer Note present",
-    result: wtDocs.length ? "pass" : docs.length ? "fail" : "cannot_verify",
+    result: wtDocs.length ? "pass" : hasAnyUploads ? "fail" : "cannot_verify",
     evidence_used: wtDocs.map((d) => d.file_name),
     affected_document: wtDocs[0]?.file_name ?? null,
     recommended_action: wtDocs.length ? "No immediate action." : "Upload at least one valid waste transfer note.",
@@ -537,7 +548,7 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
 
   checks.push({
     check_name: "Carrier licence evidence present",
-    result: carrierResolution.hasAnyCarrierEvidence ? "pass" : docs.length ? "fail" : "cannot_verify",
+    result: carrierResolution.hasAnyCarrierEvidence ? "pass" : hasAnyUploads ? "fail" : "cannot_verify",
     evidence_used: carrierDocs.map((d) => d.file_name),
     affected_document: carrierDocs[0]?.file_name ?? null,
     recommended_action: carrierDocs.length ? "No immediate action." : "Upload carrier licence evidence.",
@@ -583,7 +594,7 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
 
   checks.push({
     check_name: "Waste invoice or collection evidence present",
-    result: invoiceDocs.length || wtDocs.length ? "pass" : docs.length ? "attention_needed" : "cannot_verify",
+    result: invoiceDocs.length || wtDocs.length ? "pass" : hasAnyUploads ? "fail" : "cannot_verify",
     evidence_used: [...invoiceDocs, ...wtDocs].map((d) => d.file_name),
     affected_document: null,
     recommended_action: invoiceDocs.length || wtDocs.length ? "No immediate action." : "Upload invoice or collection evidence.",
@@ -595,7 +606,7 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
 
   checks.push({
     check_name: "Supplier/contract evidence present",
-    result: strongContractDocs.length || hasSupplierRelationshipEvidence ? "pass" : draftOrUnsignedContractDocs.length ? "attention_needed" : docs.length ? "attention_needed" : "cannot_verify",
+    result: strongContractDocs.length || hasSupplierRelationshipEvidence ? "pass" : draftOrUnsignedContractDocs.length ? "attention_needed" : hasAnyUploads ? "fail" : "cannot_verify",
     evidence_used: strongContractDocs.length
       ? strongContractDocs.map((d) => d.file_name)
       : draftOrUnsignedContractDocs.length
@@ -613,7 +624,7 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
     const foodEvidence = processed.filter((d) => lower(`${d.waste_type} ${d.ai_summary}`).includes("food"));
     checks.push({
       check_name: "Food waste evidence present",
-      result: foodEvidence.length ? "pass" : docs.length ? "fail" : "cannot_verify",
+      result: foodEvidence.length ? "pass" : hasAnyUploads ? "fail" : "cannot_verify",
       evidence_used: foodEvidence.map((d) => d.file_name),
       affected_document: foodEvidence[0]?.file_name ?? null,
       recommended_action: foodEvidence.length ? "No immediate action." : "Upload food waste collection evidence.",
@@ -627,7 +638,7 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
   if (business.produces_hazardous_waste) {
     checks.push({
       check_name: "Hazardous waste consignment note present",
-      result: hazDocs.length ? "pass" : docs.length ? "fail" : "cannot_verify",
+      result: hazDocs.length ? "pass" : hasAnyUploads ? "fail" : "cannot_verify",
       evidence_used: hazDocs.map((d) => d.file_name),
       affected_document: hazDocs[0]?.file_name ?? null,
       recommended_action: hazDocs.length ? "No immediate action." : "Upload hazardous waste consignment note evidence.",
@@ -691,13 +702,13 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
     });
   }
 
-  if (failedDocs.length > 0) {
+  if (failedDocs.length > 0 || noRelevantEvidence) {
     checks.push({
       check_name: "Document extraction reliability",
       result: "attention_needed",
-      evidence_used: failedDocs.map((d) => d.file_name),
+      evidence_used: noRelevantEvidence ? docs.map((d) => d.file_name) : failedDocs.map((d) => d.file_name),
       affected_document: failedDocs[0]?.file_name ?? null,
-      recommended_action: "Re-upload failed documents or upload clearer copies.",
+      recommended_action: noRelevantEvidence ? "Upload waste compliance evidence documents (WTN, invoice, carrier licence)." : "Re-upload failed documents or upload clearer copies.",
       source_reference: "No source reference available for this specific check."
     });
   }
@@ -797,6 +808,8 @@ function confidenceFromSignals(params: {
   const extractionCompleteness = computeRelevantExtractionCompleteness(docs);
   const duplicateCount = crossFindings.find((f) => f.key === "duplicate_documents")?.evidence.length ?? 0;
   const duplicateRatio = docs.length === 0 ? 0 : duplicateCount / docs.length;
+  const irrelevantCount = docs.filter((d) => isClearlyIrrelevantDocument(d) || ((d.document_type ?? "unknown") === "unknown" && classifyUnknownDocumentRole(d) === "irrelevant")).length;
+  const irrelevantRatio = docs.length === 0 ? 0 : irrelevantCount / docs.length;
   const hasMajorCarrierConflict = crossFindings.some((f) => f.key === "conflicting_waste_carriers" && f.severity === "high");
   const hasLicenceMismatch = crossFindings.some((f) => f.key === "licence_mismatch");
   const hasFutureDatedKey = crossFindings.some((f) => f.key === "future_dated_documents");
@@ -816,7 +829,8 @@ function confidenceFromSignals(params: {
     failed >= Math.max(1, Math.ceil(docs.length * 0.5)) ||
     highOnly >= 2 ||
     majorCrossConflictCount >= 2 ||
-    extractionCompleteness < 0.45;
+    extractionCompleteness < 0.45 ||
+    irrelevantRatio >= 1;
 
   if (hardLow) {
     level = 1;
@@ -836,7 +850,7 @@ function confidenceFromSignals(params: {
     level = highConfidenceCandidate ? 3 : 2;
   }
 
-  if (hasMajorCarrierConflict || hasLicenceMismatch || hasFutureDatedKey || hasStaleWtn || duplicateRatio > 0.4) {
+  if (hasMajorCarrierConflict || hasLicenceMismatch || hasFutureDatedKey || hasStaleWtn || duplicateRatio > 0.4 || irrelevantRatio > 0.6) {
     level = Math.max(1, level - 1) as 1 | 2 | 3;
   }
   if (lowQualityReadableCount > 0) {
@@ -1145,6 +1159,15 @@ function classifyNotUsedDocuments(docs: ReportDocument[], business: BusinessInfo
     const isUnknown = (doc.document_type ?? "unknown") === "unknown";
     const isFailed = doc.processing_status === "failed";
     const isReview = doc.processing_status === "review";
+    if (isClearlyIrrelevantDocument(doc)) {
+      out.push({
+        file_name: doc.file_name,
+        reason: "Unrelated to waste compliance",
+        recommended_action: null,
+        category: "unrelated"
+      });
+      continue;
+    }
 
     if (isFailed) {
       if (business.produces_hazardous_waste && looksLikeHazardousEvidence(doc)) {
@@ -1505,7 +1528,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     `Extraction completeness: ${Math.round(extractionCompleteness * 100)}%`,
     `Business-level risks (high/medium): ${countHighMediumRisks(topRisks)}`,
     `Cross-document ${pluralize(nonMaintenanceConsistencyFindings.length, "finding", "findings")}: ${nonMaintenanceConsistencyFindings.length}`,
-    `Irrelevant/unknown docs: ${docs.filter((d) => (d.document_type === "unknown") && classifyUnknownDocumentRole(d) !== "supporting").length}/${docs.length}`,
+    `Irrelevant/unknown docs: ${docs.filter((d) => isClearlyIrrelevantDocument(d) || ((d.document_type === "unknown") && classifyUnknownDocumentRole(d) === "irrelevant")).length}/${docs.length}`,
     `Duplicate docs flagged: ${nonMaintenanceConsistencyFindings.find((f) => f.key === "duplicate_documents")?.evidence.length ?? 0}`,
     `Source coverage: ${checks.filter((c) => !c.source_reference.startsWith("No source reference available")).length}/${checks.length}`
   ];
@@ -1556,9 +1579,9 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     (nonMaintenanceConsistencyFindings.some((f) => f.key.includes("licence")) || nonMaintenanceConsistencyFindings.some((f) => f.key.includes("future") || f.key.includes("stale")))
       ? "Date/licence evidence requires review"
       : "No major date/licence conflicts detected",
-    docs.filter((d) => d.document_type === "unknown" && classifyUnknownDocumentRole(d) !== "supporting").length > 0
-      ? `${docs.filter((d) => d.document_type === "unknown" && classifyUnknownDocumentRole(d) !== "supporting").length} unsupported ${pluralize(
-          docs.filter((d) => d.document_type === "unknown" && classifyUnknownDocumentRole(d) !== "supporting").length,
+    docs.filter((d) => isClearlyIrrelevantDocument(d) || (d.document_type === "unknown" && classifyUnknownDocumentRole(d) === "irrelevant")).length > 0
+      ? `${docs.filter((d) => isClearlyIrrelevantDocument(d) || (d.document_type === "unknown" && classifyUnknownDocumentRole(d) === "irrelevant")).length} unsupported ${pluralize(
+          docs.filter((d) => isClearlyIrrelevantDocument(d) || (d.document_type === "unknown" && classifyUnknownDocumentRole(d) === "irrelevant")).length,
           "file was",
           "files were"
         )} excluded`
