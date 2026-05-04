@@ -121,6 +121,7 @@ type SupportingDocument = {
 };
 
 type UnknownDocRole = "supporting" | "irrelevant" | "ambiguous";
+type DocumentAssessmentRole = "PRIMARY_EVIDENCE" | "SUPPORTING_EVIDENCE" | "IRRELEVANT_NOT_USED";
 
 function pluralize(count: number, singular: string, plural: string) {
   return count === 1 ? singular : plural;
@@ -154,6 +155,19 @@ function isClearlyIrrelevantDocument(doc: ReportDocument) {
   return irrelevantSignals && !wasteSignals;
 }
 
+function classifyDocumentAssessmentRole(doc: ReportDocument): DocumentAssessmentRole {
+  const type = (doc.document_type ?? "unknown").toLowerCase();
+  if (["waste_transfer_note", "carrier_licence", "invoice", "contract", "hazardous_waste_note", "recycling_report"].includes(type)) {
+    return "PRIMARY_EVIDENCE";
+  }
+  if (type === "unknown") {
+    const unknownRole = classifyUnknownDocumentRole(doc);
+    if (unknownRole === "supporting" || unknownRole === "ambiguous") return "SUPPORTING_EVIDENCE";
+    return "IRRELEVANT_NOT_USED";
+  }
+  return isClearlyIrrelevantDocument(doc) ? "IRRELEVANT_NOT_USED" : "SUPPORTING_EVIDENCE";
+}
+
 function classifySupportingDocuments(docs: ReportDocument[]): SupportingDocument[] {
   const reasonFromDoc = (doc: ReportDocument) => {
     const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
@@ -168,8 +182,7 @@ function classifySupportingDocuments(docs: ReportDocument[]): SupportingDocument
   };
 
   return docs
-    .filter((doc) => (doc.document_type ?? "unknown") === "unknown")
-    .filter((doc) => classifyUnknownDocumentRole(doc) === "supporting")
+    .filter((doc) => classifyDocumentAssessmentRole(doc) === "SUPPORTING_EVIDENCE")
     .map((doc) => ({
       file_name: doc.file_name,
       reason: reasonFromDoc(doc)
@@ -514,7 +527,7 @@ export function extractDestinationFromEvidenceForTest(doc: Pick<ReportDocument, 
 function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; rules: RuleRef[]; sources: SourceRef[] }) {
   const { business, docs, rules, sources } = params;
 
-  const relevantDocs = docs.filter((doc) => !isClearlyIrrelevantDocument(doc));
+  const relevantDocs = docs.filter((doc) => classifyDocumentAssessmentRole(doc) !== "IRRELEVANT_NOT_USED");
   const hasAnyUploads = docs.length > 0;
   const noRelevantEvidence = hasAnyUploads && relevantDocs.length === 0;
   const processed = relevantDocs.filter(isProcessed);
@@ -808,7 +821,7 @@ function confidenceFromSignals(params: {
   const extractionCompleteness = computeRelevantExtractionCompleteness(docs);
   const duplicateCount = crossFindings.find((f) => f.key === "duplicate_documents")?.evidence.length ?? 0;
   const duplicateRatio = docs.length === 0 ? 0 : duplicateCount / docs.length;
-  const irrelevantCount = docs.filter((d) => isClearlyIrrelevantDocument(d) || ((d.document_type ?? "unknown") === "unknown" && classifyUnknownDocumentRole(d) === "irrelevant")).length;
+  const irrelevantCount = docs.filter((d) => classifyDocumentAssessmentRole(d) === "IRRELEVANT_NOT_USED").length;
   const irrelevantRatio = docs.length === 0 ? 0 : irrelevantCount / docs.length;
   const hasMajorCarrierConflict = crossFindings.some((f) => f.key === "conflicting_waste_carriers" && f.severity === "high");
   const hasLicenceMismatch = crossFindings.some((f) => f.key === "licence_mismatch");
@@ -1159,7 +1172,7 @@ function classifyNotUsedDocuments(docs: ReportDocument[], business: BusinessInfo
     const isUnknown = (doc.document_type ?? "unknown") === "unknown";
     const isFailed = doc.processing_status === "failed";
     const isReview = doc.processing_status === "review";
-    if (isClearlyIrrelevantDocument(doc)) {
+    if (classifyDocumentAssessmentRole(doc) === "IRRELEVANT_NOT_USED") {
       out.push({
         file_name: doc.file_name,
         reason: "Unrelated to waste compliance",
@@ -1528,7 +1541,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     `Extraction completeness: ${Math.round(extractionCompleteness * 100)}%`,
     `Business-level risks (high/medium): ${countHighMediumRisks(topRisks)}`,
     `Cross-document ${pluralize(nonMaintenanceConsistencyFindings.length, "finding", "findings")}: ${nonMaintenanceConsistencyFindings.length}`,
-    `Irrelevant/unknown docs: ${docs.filter((d) => isClearlyIrrelevantDocument(d) || ((d.document_type === "unknown") && classifyUnknownDocumentRole(d) === "irrelevant")).length}/${docs.length}`,
+    `Irrelevant/unknown docs: ${docs.filter((d) => classifyDocumentAssessmentRole(d) === "IRRELEVANT_NOT_USED").length}/${docs.length}`,
     `Duplicate docs flagged: ${nonMaintenanceConsistencyFindings.find((f) => f.key === "duplicate_documents")?.evidence.length ?? 0}`,
     `Source coverage: ${checks.filter((c) => !c.source_reference.startsWith("No source reference available")).length}/${checks.length}`
   ];
@@ -1579,9 +1592,9 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     (nonMaintenanceConsistencyFindings.some((f) => f.key.includes("licence")) || nonMaintenanceConsistencyFindings.some((f) => f.key.includes("future") || f.key.includes("stale")))
       ? "Date/licence evidence requires review"
       : "No major date/licence conflicts detected",
-    docs.filter((d) => isClearlyIrrelevantDocument(d) || (d.document_type === "unknown" && classifyUnknownDocumentRole(d) === "irrelevant")).length > 0
-      ? `${docs.filter((d) => isClearlyIrrelevantDocument(d) || (d.document_type === "unknown" && classifyUnknownDocumentRole(d) === "irrelevant")).length} unsupported ${pluralize(
-          docs.filter((d) => isClearlyIrrelevantDocument(d) || (d.document_type === "unknown" && classifyUnknownDocumentRole(d) === "irrelevant")).length,
+    docs.filter((d) => classifyDocumentAssessmentRole(d) === "IRRELEVANT_NOT_USED").length > 0
+      ? `${docs.filter((d) => classifyDocumentAssessmentRole(d) === "IRRELEVANT_NOT_USED").length} unsupported ${pluralize(
+          docs.filter((d) => classifyDocumentAssessmentRole(d) === "IRRELEVANT_NOT_USED").length,
           "file was",
           "files were"
         )} excluded`
