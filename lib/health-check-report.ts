@@ -1122,6 +1122,18 @@ export function dedupeRisksForTest(risks: ReportAlert[]) {
   return dedupeRisks(risks);
 }
 
+function buildTopRisks(risks: ReportAlert[], mixedBusinessHighRisk: boolean) {
+  return risks.filter(isBusinessRelevantRisk).slice(0, mixedBusinessHighRisk ? 4 : 5);
+}
+
+function countHighMediumRisks(risks: ReportAlert[]) {
+  return risks.filter((risk) => risk.severity === "high" || risk.severity === "medium").length;
+}
+
+export function countHighMediumRisksForTest(risks: ReportAlert[]) {
+  return countHighMediumRisks(risks);
+}
+
 function looksLikeHazardousEvidence(doc: ReportDocument) {
   const text = `${doc.file_name} ${doc.document_type ?? ""} ${doc.ai_summary ?? ""}`.toLowerCase();
   return /hazard|consignment|hwcn|ewc|dangerous waste/i.test(text);
@@ -1469,14 +1481,15 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     });
   }
   businessRisks = dedupeRisks(businessRisks);
+  const topRisks = buildTopRisks(businessRisks, mixedBusinessHighRisk);
   const hasOnlyExpiredNowMaintenanceIssue =
     score.score >= 90 &&
     score.status === "compliant" &&
     !mixedBusinessHighRisk &&
     extractionCompleteness >= 0.8 &&
     checks.filter((c) => c.result === "pass").length >= checks.length - 1 &&
-    businessRisks.filter((r) => r.severity === "high").length === 0 &&
-    businessRisks.filter((r) => r.severity === "medium").length <= 1 &&
+    topRisks.filter((r) => r.severity === "high").length === 0 &&
+    topRisks.filter((r) => r.severity === "medium").length <= 1 &&
     businessRisks.some((r) => (r.rule_id ?? "") === maintenanceCarrierKey) &&
     crossConflicts === 0;
   const finalConfidence = mixedBusinessHighRisk
@@ -1490,7 +1503,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   const confidenceContributors = [
     `Baseline evidence checks: ${checks.filter((c) => c.result === "pass").length}/${checks.length} passed`,
     `Extraction completeness: ${Math.round(extractionCompleteness * 100)}%`,
-    `Business-level risks (high/medium): ${businessRisks.filter((a) => a.severity === "high" || a.severity === "medium").length}`,
+    `Business-level risks (high/medium): ${countHighMediumRisks(topRisks)}`,
     `Cross-document ${pluralize(nonMaintenanceConsistencyFindings.length, "finding", "findings")}: ${nonMaintenanceConsistencyFindings.length}`,
     `Irrelevant/unknown docs: ${docs.filter((d) => (d.document_type === "unknown") && classifyUnknownDocumentRole(d) !== "supporting").length}/${docs.length}`,
     `Duplicate docs flagged: ${nonMaintenanceConsistencyFindings.find((f) => f.key === "duplicate_documents")?.evidence.length ?? 0}`,
@@ -1577,7 +1590,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
               businessRisks.some((r) => r.severity === "high"),
               score.score === 100 && businessRisks.length === 0
             ),
-    top_risks: businessRisks.filter(isBusinessRelevantRisk).slice(0, mixedBusinessHighRisk ? 4 : 5),
+    top_risks: topRisks,
     missing_documents: dedupedMissingDocs,
     compliance_checks: checks,
     documents: docs,
