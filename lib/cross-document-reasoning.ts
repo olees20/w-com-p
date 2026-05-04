@@ -216,21 +216,7 @@ export function runCrossDocumentReasoning(params: {
     });
   }
 
-  if (carrierLicenceDocs.length > 0 && !hasValidLicenceNow && hasExpiredLicenceNow) {
-    findings.push({
-      key: "carrier_licence_expired_only",
-      title: "Carrier licence evidence expired",
-      severity: "high",
-      status: "fail",
-      message: "Only expired carrier licence evidence was found.",
-      evidence: carrierLicenceDocs
-        .filter((d) => d.expiry_date)
-        .map((d) => `${d.file_name} -> ${d.expiry_date}`),
-      recommended_action: "Upload current valid carrier licence evidence.",
-      points: 0,
-      affects_confidence: true
-    });
-  }
+  // Consolidated timing-based licence risk is created below to avoid duplicate findings.
 
   const futureDated = processedDocs.filter(
     (d) => ["waste_transfer_note", "invoice"].includes(d.document_type ?? "") && parseDate(d.extracted_date) && (parseDate(d.extracted_date) as Date) > now
@@ -260,20 +246,6 @@ export function runCrossDocumentReasoning(params: {
     const exp = parseDate(linked.expiry_date);
     return !!exp && exp < wtnDate;
   });
-  if (expiredBeforeWtn.length) {
-    findings.push({
-      key: "licence_expired_before_transfer",
-      title: "WTN references a licence that was expired at transfer date",
-      severity: "high",
-      status: "fail",
-      message: "One or more WTNs appear to reference carrier evidence that was expired before the transfer date.",
-      evidence: expiredBeforeWtn.map((d) => `${d.file_name} -> ${d.extracted_date}`),
-      recommended_action: "Verify transfer records and upload valid carrier evidence for those dates.",
-      points: 12,
-      affects_confidence: true
-    });
-  }
-
   const validAtTransferButExpiredNow = wtnLicenceDocs.filter((wtn) => {
     const wtnDate = parseDate(wtn.extracted_date);
     if (!wtnDate) return false;
@@ -284,14 +256,33 @@ export function runCrossDocumentReasoning(params: {
     const exp = parseDate(linked.expiry_date);
     return !!exp && exp >= wtnDate && exp < now;
   });
-  if (validAtTransferButExpiredNow.length) {
+  const hasTransferLinkedWtn = wtnLicenceDocs.length > 0;
+  const hasInvalidAtTransfer = expiredBeforeWtn.length > 0;
+  const hasExpiredNowOnly = !hasInvalidAtTransfer && hasTransferLinkedWtn && validAtTransferButExpiredNow.length > 0;
+  const hasOnlyExpiredNoWtnContext = !hasTransferLinkedWtn && !hasValidLicenceNow && hasExpiredLicenceNow && carrierLicenceDocs.length > 0;
+
+  if (hasInvalidAtTransfer) {
     findings.push({
-      key: "licence_valid_at_transfer_expired_now",
-      title: "Licence may have been valid at transfer date but is expired now",
+      key: "carrier_licence_timing_invalid_at_transfer",
+      title: "Carrier licence was not valid at the time of waste transfer",
+      severity: "high",
+      status: "fail",
+      message: "Carrier licence was not valid at the time of waste transfer.",
+      evidence: expiredBeforeWtn.map((d) => `${d.file_name} -> ${d.extracted_date}`),
+      recommended_action: "Upload licence evidence that was valid on each transfer date.",
+      points: 12,
+      affects_confidence: true
+    });
+  } else if (hasExpiredNowOnly || hasOnlyExpiredNoWtnContext) {
+    findings.push({
+      key: "carrier_licence_timing_expired_now",
+      title: "Carrier licence valid at transfer but expired now",
       severity: "medium",
       status: "attention_needed",
-      message: "Evidence suggests the carrier licence may have been valid at the transfer date but is now expired.",
-      evidence: validAtTransferButExpiredNow.map((d) => `${d.file_name} -> ${d.extracted_date}`),
+      message: "Carrier licence was valid at the time of transfer but has since expired. Updated evidence should be provided.",
+      evidence: hasExpiredNowOnly
+        ? validAtTransferButExpiredNow.map((d) => `${d.file_name} -> ${d.extracted_date}`)
+        : carrierLicenceDocs.filter((d) => d.expiry_date).map((d) => `${d.file_name} -> ${d.expiry_date}`),
       recommended_action: "Upload current carrier licence evidence for ongoing compliance.",
       points: 0,
       affects_confidence: true
