@@ -73,6 +73,17 @@ function getCarrierLicenceNumber(doc: ReportDocument) {
   return null;
 }
 
+function classifyUnknownDocumentRole(doc: ReportDocument): "supporting" | "irrelevant" | "ambiguous" {
+  const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
+  const text = `${doc.file_name} ${doc.ai_summary ?? ""} ${JSON.stringify(payload)}`.toLowerCase();
+  const hasSupplierConfirmation = /(supplier confirmation|supplier update|provider confirmation|service confirmation|collection confirmation|correspondence|email)/.test(text);
+  const hasLicenceReference = /(licen[cs]e|registration number|carrier number|cbd[u0-9]+)/.test(text);
+  const hasWasteServiceReference = /(waste service|waste collection|collection service|general waste|recycling collection|service agreement|waste transfer)/.test(text);
+  if (hasSupplierConfirmation || hasLicenceReference || hasWasteServiceReference) return "supporting";
+  if (/(insurance|menu|receipt|bank statement|payroll|employment|cv)/.test(text)) return "irrelevant";
+  return "ambiguous";
+}
+
 function isComplianceDoc(doc: ReportDocument) {
   return ["waste_transfer_note", "invoice", "carrier_licence", "contract", "hazardous_waste_note", "recycling_report"].includes(doc.document_type ?? "");
 }
@@ -357,7 +368,22 @@ export function runCrossDocumentReasoning(params: {
     });
   }
 
-  const irrelevantDocs = params.documents.filter((d) => d.document_type === "unknown");
+  const unknownDocs = params.documents.filter((d) => d.document_type === "unknown");
+  const supportingDocs = unknownDocs.filter((d) => classifyUnknownDocumentRole(d) === "supporting");
+  const irrelevantDocs = unknownDocs.filter((d) => classifyUnknownDocumentRole(d) === "irrelevant");
+  if (supportingDocs.length) {
+    findings.push({
+      key: "additional_supporting_documents",
+      title: "Additional supporting documents identified",
+      severity: "low",
+      status: "info",
+      message: "Additional non-essential supporting documents were identified and considered as context.",
+      evidence: supportingDocs.map((d) => d.file_name),
+      recommended_action: "No immediate action.",
+      points: 0,
+      affects_confidence: false
+    });
+  }
   if (irrelevantDocs.length) {
     findings.push({
       key: "irrelevant_documents",

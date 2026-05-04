@@ -137,11 +137,10 @@ function hasText(v: string | null | undefined) {
 function classifyUnknownDocumentRole(doc: ReportDocument): UnknownDocRole {
   const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
   const text = `${doc.file_name} ${doc.ai_summary ?? ""} ${JSON.stringify(payload)}`.toLowerCase();
-  const supportingSignals =
-    /(email|correspondence|service confirmation|confirmation|supplier update|collection confirmation|waste collection|licen[cs]e reference|carrier reference|supplier confirmation)/.test(
-      text
-    ) &&
-    /(waste|carrier|supplier|licen[cs]e|collection|service|invoice|contract)/.test(text);
+  const hasSupplierConfirmation = /(supplier confirmation|supplier update|provider confirmation|service confirmation|collection confirmation|correspondence|email)/.test(text);
+  const hasLicenceReference = /(licen[cs]e|registration number|carrier number|cbd[u0-9]+)/.test(text);
+  const hasWasteServiceReference = /(waste service|waste collection|collection service|general waste|recycling collection|service agreement|waste transfer)/.test(text);
+  const supportingSignals = hasSupplierConfirmation || hasLicenceReference || hasWasteServiceReference;
   if (supportingSignals) return "supporting";
   if (/(insurance|menu|receipt|bank statement|payroll|employment|cv)/.test(text)) return "irrelevant";
   return "ambiguous";
@@ -1144,15 +1143,15 @@ function classifyNotUsedDocuments(docs: ReportDocument[], business: BusinessInfo
 
     if (isUnknown) {
       const role = classifyUnknownDocumentRole(doc);
-      if (role === "supporting") {
+      if (role === "supporting" || role === "ambiguous") {
         continue;
       }
-      const likelyWasteRelated = role === "ambiguous" || /waste|carrier|licen[cs]e|invoice|transfer|consignment|recycl/i.test(doc.file_name.toLowerCase());
+      const likelyWasteRelated = /waste|carrier|licen[cs]e|invoice|transfer|consignment|recycl/i.test(doc.file_name.toLowerCase());
       out.push({
         file_name: doc.file_name,
-        reason: likelyWasteRelated ? "Ambiguous document type" : "Unrelated to waste compliance",
-        recommended_action: likelyWasteRelated ? `Re-upload ${doc.file_name} if it was intended to evidence waste compliance.` : null,
-        category: likelyWasteRelated ? "ambiguous" : "unrelated"
+        reason: likelyWasteRelated ? "Unrelated to waste compliance" : "Unrelated to waste compliance",
+        recommended_action: null,
+        category: "unrelated"
       });
       continue;
     }
