@@ -143,6 +143,6 @@ test("expired-now maintenance case remains compliant/high confidence and usable 
   });
   assert.equal(assessment, "Evidence pack usable (updates recommended)");
 
-  const verdict = verdictForTest(confidence, "compliant", 0, false, true, false);
+  const verdict = verdictForTest(confidence, "compliant", 0, false, true, false, false);
   assert.match(verdict, /expired since the transfer date/i);
 });

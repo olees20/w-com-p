@@ -86,6 +86,7 @@ export type HealthCheckReport = {
   consistency_findings: ConsistencyFinding[];
   confidence_contributors: string[];
   documents_not_used: Array<{ file_name: string; reason: string }>;
+  additional_supporting_documents: Array<{ file_name: string; reason: string }>;
   consistency_summary: {
     carriers_detected: string[];
     licence_numbers_detected: string[];
@@ -114,6 +115,11 @@ type NotUsedClassification = {
   category: "unrelated" | "unreadable" | "ambiguous" | "potentially_relevant_unreadable";
 };
 
+type SupportingDocument = {
+  file_name: string;
+  reason: string;
+};
+
 type UnknownDocRole = "supporting" | "irrelevant" | "ambiguous";
 
 function pluralize(count: number, singular: string, plural: string) {
@@ -132,12 +138,23 @@ function classifyUnknownDocumentRole(doc: ReportDocument): UnknownDocRole {
   const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
   const text = `${doc.file_name} ${doc.ai_summary ?? ""} ${JSON.stringify(payload)}`.toLowerCase();
   const supportingSignals =
-    /(email|correspondence|service confirmation|confirmation|supplier update|collection confirmation|waste collection|licen[cs]e reference|carrier reference)/.test(
+    /(email|correspondence|service confirmation|confirmation|supplier update|collection confirmation|waste collection|licen[cs]e reference|carrier reference|supplier confirmation)/.test(
       text
-    ) && /(waste|carrier|supplier|licen[cs]e|collection|service)/.test(text);
+    ) &&
+    /(waste|carrier|supplier|licen[cs]e|collection|service|invoice|contract)/.test(text);
   if (supportingSignals) return "supporting";
   if (/(insurance|menu|receipt|bank statement|payroll|employment|cv)/.test(text)) return "irrelevant";
   return "ambiguous";
+}
+
+function classifySupportingDocuments(docs: ReportDocument[]): SupportingDocument[] {
+  return docs
+    .filter((doc) => (doc.document_type ?? "unknown") === "unknown")
+    .filter((doc) => classifyUnknownDocumentRole(doc) === "supporting")
+    .map((doc) => ({
+      file_name: doc.file_name,
+      reason: "Supplier/licence/service correspondence supporting primary evidence."
+    }));
 }
 
 function getJsonText(payload: Record<string, unknown>, keys: string[]) {
@@ -841,8 +858,12 @@ function verdict(
   missingCount: number,
   incompleteEvidence: boolean,
   maintenanceOnlyExpiredNow: boolean,
-  hasHighSeverityRisk: boolean
+  hasHighSeverityRisk: boolean,
+  perfectScoreNoRisks: boolean
 ) {
+  if (perfectScoreNoRisks) {
+    return "Based on the documents provided, compliance can be clearly demonstrated.";
+  }
   if (scoreStatus === "compliant" && !hasHighSeverityRisk) {
     return "Based on the documents provided, compliance can be demonstrated.";
   }
@@ -971,9 +992,10 @@ export function verdictForTest(
   missingCount: number,
   incompleteEvidence: boolean,
   maintenanceOnlyExpiredNow: boolean,
-  hasHighSeverityRisk: boolean
+  hasHighSeverityRisk: boolean,
+  perfectScoreNoRisks: boolean
 ) {
-  return verdict(confidence, scoreStatus, missingCount, incompleteEvidence, maintenanceOnlyExpiredNow, hasHighSeverityRisk);
+  return verdict(confidence, scoreStatus, missingCount, incompleteEvidence, maintenanceOnlyExpiredNow, hasHighSeverityRisk, perfectScoreNoRisks);
 }
 
 function mixedBusinessPrimaryActions() {
@@ -1263,6 +1285,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   const dedupedMissingDocs = Array.from(new Set(missingDocs));
 
   const notUsedDocs = classifyNotUsedDocuments(docs, business);
+  const supportingDocs = classifySupportingDocuments(docs);
   const cannotVerify = new Set<string>();
   if (!docs.length) cannotVerify.add("No documents uploaded for review.");
   const reviewCount = docs.filter((d) => d.processing_status === "review").length;
@@ -1467,6 +1490,15 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
       `Entity match ratio: ${Math.round(entityValidation.match_ratio * 100)}% (${entityValidation.producer_names.length} producer/customer ${pluralize(entityValidation.producer_names.length, "name", "names")} detected)`
     );
   }
+  if (score.score === 100 && finalConfidence !== "High Confidence") {
+    const confidenceReasons: string[] = [];
+    if (docs.some((d) => isLowQualityReadable(d))) confidenceReasons.push("low-quality scanned primary evidence");
+    if (docs.some((d) => d.document_type === "contract" && isDraftOrUnsignedContract(d))) confidenceReasons.push("draft/unsigned contract document");
+    if (docs.some((d) => d.processing_status === "review")) confidenceReasons.push("partially unreadable or incomplete primary extraction");
+    if (confidenceReasons.length > 0) {
+      confidenceContributors.push(`Confidence is slightly reduced due to: ${confidenceReasons.join("; ")}`);
+    }
+  }
 
   const informationalFindings = cross.consistency_findings.filter((f) =>
     ["duplicate_documents", "irrelevant_documents", "historic_expired_licence_uploaded", maintenanceCarrierKey].includes(f.key)
@@ -1531,7 +1563,8 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
               dedupedMissingDocs.length,
               incompleteEvidence,
               hasOnlyExpiredNowMaintenanceIssue,
-              businessRisks.some((r) => r.severity === "high")
+              businessRisks.some((r) => r.severity === "high"),
+              score.score === 100 && businessRisks.length === 0
             ),
     top_risks: businessRisks.filter(isBusinessRelevantRisk).slice(0, mixedBusinessHighRisk ? 4 : 5),
     missing_documents: dedupedMissingDocs,
@@ -1547,6 +1580,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     consistency_findings: nonMaintenanceConsistencyFindings,
     confidence_contributors: confidenceContributors,
     documents_not_used: notUsedDocs.map((d) => ({ file_name: d.file_name, reason: d.reason })),
+    additional_supporting_documents: supportingDocs,
     consistency_summary: buildConsistencySummary(docs, nonMaintenanceConsistencyFindings, {
       carriersDetected: entityValidation.carrier_names,
       destinationsDetected: [...entityValidation.destination_names, ...entityValidation.site_address_names]

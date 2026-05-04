@@ -101,7 +101,7 @@ test("incomplete but valid evidence pack uses incomplete assessment and medium c
   });
   assert.equal(assessment, "Evidence pack incomplete");
 
-  const verdict = verdictForTest(finalConfidence, "attention_needed", 1, incomplete, false, false);
+  const verdict = verdictForTest(finalConfidence, "attention_needed", 1, incomplete, false, false, false);
   assert.equal(
     verdict,
     "Core evidence is present, but some required documents are missing. Without these, compliance cannot be fully demonstrated."
