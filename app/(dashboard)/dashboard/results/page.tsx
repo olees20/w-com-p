@@ -49,6 +49,9 @@ function renderRiskDescription(title: string, description: string | null) {
     return "During an inspection, you may be unable to demonstrate that your waste was handled by a currently valid registered carrier.";
   }
   if (t.includes("food waste")) {
+    if (t.includes("could not be verified")) {
+      return "Based on your business profile, food waste evidence was expected but could not be verified from the uploaded documents.";
+    }
     return "Based on your business profile, food waste evidence was expected but not found in the uploaded documents.";
   }
   return description ?? "No description provided.";

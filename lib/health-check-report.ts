@@ -1989,7 +1989,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   const foodWasteMissing = business.produces_food_waste && checks.find((c) => c.check_name === "Food waste evidence present")?.result === "fail";
   const refinedBusinessActions = wtnMissing
     ? businessActionsOnly.filter((action) => /waste transfer note/i.test(action))
-    : foodWasteMissing
+    : foodWasteMissing && !hasCoreUnverifiable
       ? businessActionsOnly.filter((action) => /food waste/i.test(action) || /contract documentation/i.test(action))
     : businessActionsOnly;
   const uniqueRefinedActions = Array.from(new Set(refinedBusinessActions));
