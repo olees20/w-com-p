@@ -20,12 +20,18 @@ export async function updateAccountDetails(formData: FormData) {
 
   const businessName = getString(formData.get("name"));
   const businessType = getString(formData.get("business_type"));
+  const sitesCountRaw = getString(formData.get("sites_count"));
   const address = getString(formData.get("address"));
   const postcode = getString(formData.get("postcode"));
   const currentWasteProvider = getString(formData.get("current_waste_provider"));
 
-  if (!businessName || !businessType) {
-    redirect("/dashboard/account?error=Business+name+and+type+are+required");
+  if (!businessName || !businessType || !sitesCountRaw) {
+    redirect("/dashboard/account?error=Business+name,+type,+and+sites+are+required");
+  }
+
+  const sitesCount = Number.parseInt(sitesCountRaw, 10);
+  if (Number.isNaN(sitesCount) || sitesCount < 1) {
+    redirect("/dashboard/account?error=Sites+must+be+a+whole+number+of+at+least+1");
   }
 
   const { data: business } = await supabase.from("businesses").select("id").eq("user_id", user.id).maybeSingle<{ id: string }>();
@@ -39,6 +45,7 @@ export async function updateAccountDetails(formData: FormData) {
     .update({
       name: businessName,
       business_type: businessType,
+      sites_count: sitesCount,
       address: address || null,
       postcode: postcode || null,
       current_waste_provider: currentWasteProvider || null

@@ -19,11 +19,12 @@ export default async function AccountPage({
 
   const { data: business } = await supabase
     .from("businesses")
-    .select("name,business_type,address,postcode,current_waste_provider")
+    .select("name,business_type,sites_count,address,postcode,current_waste_provider")
     .eq("user_id", user.id)
     .maybeSingle<{
       name: string | null;
       business_type: string | null;
+      sites_count: number | null;
       address: string | null;
       postcode: string | null;
       current_waste_provider: string | null;
@@ -61,6 +62,19 @@ export default async function AccountPage({
           <div>
             <label className="mb-1 block text-sm font-semibold text-[#111827]">Business type</label>
             <input name="business_type" defaultValue={business?.business_type ?? ""} required className="w-full rounded-lg border border-[#E5E7EB] bg-white px-3 py-2 text-sm" />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-semibold text-[#111827]">Number of sites</label>
+            <input
+              name="sites_count"
+              type="number"
+              min={1}
+              step={1}
+              required
+              defaultValue={business?.sites_count ?? 1}
+              className="w-full rounded-lg border border-[#E5E7EB] bg-white px-3 py-2 text-sm"
+            />
           </div>
 
           <div>
