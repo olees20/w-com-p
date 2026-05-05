@@ -356,3 +356,55 @@ test("pack I detects invoice duplicate as informational only", () => {
   assert.ok(dup?.evidence[0].includes("invoice_april.pdf"));
   assert.equal(result.score_deductions.some((d) => d.reason.toLowerCase().includes("duplicate")), false);
 });
+
+test("licence invalid-at-transfer uses impact wording for risk and technical wording for consistency", () => {
+  const result = runCrossDocumentReasoning({
+    business: { produces_food_waste: false, produces_hazardous_waste: false },
+    openAlerts: [],
+    documents: [
+      {
+        ...baseDoc,
+        id: "wtn-1",
+        file_name: "wtn_licence_246810.pdf",
+        document_type: "waste_transfer_note",
+        extracted_supplier: "EcoLoop Waste Services Ltd",
+        extracted_date: "2026-04-22",
+        extracted_licence_number: "CBDU246810",
+        ai_extracted_json: {
+          carrier_name: "EcoLoop Waste Services Ltd",
+          producer_name: "Copper Kettle Bistro Ltd"
+        } as unknown as { missing_fields?: string[] }
+      },
+      {
+        ...baseDoc,
+        id: "lic-old",
+        file_name: "licence_matching_number_expired_before_transfer.pdf",
+        document_type: "carrier_licence",
+        extracted_supplier: "EcoLoop Waste Services Ltd",
+        extracted_licence_number: "CBDU246810",
+        extracted_date: null,
+        expiry_date: "2026-03-01"
+      },
+      {
+        ...baseDoc,
+        id: "lic-new-wrong",
+        file_name: "licence_wrong_number_valid.pdf",
+        document_type: "carrier_licence",
+        extracted_supplier: "EcoLoop Waste Services Ltd",
+        extracted_licence_number: "CBDU135791",
+        extracted_date: null,
+        expiry_date: "2027-05-31"
+      }
+    ]
+  });
+
+  const consistency = result.consistency_findings.find((f) => f.key === "licence_invalid_at_transfer");
+  assert.ok(consistency);
+  assert.equal(consistency?.title, "Licence number mismatch between WTN and valid carrier licence");
+
+  const risk = result.business_level_risks.find((r) => (r.rule_id ?? "") === "licence_invalid_at_transfer");
+  assert.ok(risk);
+  assert.equal(risk?.title, "Carrier licence invalid at transfer");
+  assert.ok((risk?.description ?? "").includes("not valid at the time of transfer"));
+  assert.notEqual(risk?.description, consistency?.message);
+});

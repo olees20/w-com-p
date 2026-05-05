@@ -256,11 +256,11 @@ export function runCrossDocumentReasoning(params: {
 
     findings.push({
       key: "licence_invalid_at_transfer",
-      title: "Carrier licence mismatch and invalid at transfer",
+      title: "Licence number mismatch between WTN and valid carrier licence",
       severity: "high",
       status: "fail",
       message:
-        "Carrier licence evidence indicates the referenced licence was not valid at the transfer date, or the valid licence evidence does not match the WTN licence number.",
+        "The WTN licence number could be matched only to expired licence evidence for the transfer date, while available valid licence evidence references a different licence number.",
       evidence: [...invalidEvidence, ...mismatchEvidence, ...validNonMatching],
       recommended_action: "Upload licence evidence that matches each WTN licence number and was valid on each transfer date.",
       points: 0,
@@ -346,15 +346,29 @@ export function runCrossDocumentReasoning(params: {
 
   const businessLevelRisks: ReportAlert[] = findings
     .filter((f) => f.status !== "info")
-    .map((f, idx) => ({
-      id: `cross-${idx}-${f.key}`,
-      title: f.title,
-      description: f.message,
-      severity: f.severity,
-      status: "open",
-      rule_id: f.key,
-      document_id: null
-    }));
+    .map((f, idx) => {
+      if (f.key === "licence_invalid_at_transfer") {
+        return {
+          id: `cross-${idx}-${f.key}`,
+          title: "Carrier licence invalid at transfer",
+          description:
+            "The licence referenced on the waste transfer note was not valid at the time of transfer, and the available valid licence evidence does not match the WTN licence number.",
+          severity: f.severity,
+          status: "open",
+          rule_id: f.key,
+          document_id: null
+        } as ReportAlert;
+      }
+      return {
+        id: `cross-${idx}-${f.key}`,
+        title: f.title,
+        description: f.message,
+        severity: f.severity,
+        status: "open",
+        rule_id: f.key,
+        document_id: null
+      } as ReportAlert;
+    });
 
   const recommendedActions = Array.from(new Set(findings.map((f) => f.recommended_action)));
   const scoreDeductions = findings.filter((f) => f.points > 0).map((f) => ({ reason: f.title, points: f.points }));
