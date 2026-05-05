@@ -423,9 +423,9 @@ export function validateSingleBusinessPack(params: {
       processed.some((d) => d.document_type === "invoice");
     const similarNameSignal = unmatched.some((name) => hasSimilarBusinessName(name, params.onboardedBusinessName));
     const relatedSignals = [sameSiteAddressSignal, sameCarrierSignal, sameDateSignal, sameWasteFlowSignal, similarNameSignal].filter(Boolean).length;
-
     const minorVariationSignal = unmatched.some((name) => isMinorNameVariation(name, params.onboardedBusinessName));
-    if (minorVariationSignal && relatedSignals >= 3) {
+
+    if (minorVariationSignal && matchRatio >= 0.6) {
       finding = {
         key: "document_entity_mismatch",
         title: "Minor business naming variation detected",
@@ -434,9 +434,9 @@ export function validateSingleBusinessPack(params: {
         message: `The documents reference ${unmatched.slice(0, 2).join(", ")}, which appears close to ${params.onboardedBusinessName ?? "the onboarded business"} naming.`,
         recommended_action:
           `Confirm whether ${unmatched[0] ?? "the detected entity"} is a legal/trading name or related entity for ${params.onboardedBusinessName ?? "the onboarded business"}.`,
-        points: 3
+        points: 4
       };
-    } else if (relatedSignals >= 2) {
+    } else if (matchRatio >= 0.3 && matchRatio < 0.6) {
       finding = {
         key: "document_entity_mismatch",
         title: "Documents may reference a related business entity",
@@ -456,20 +456,58 @@ export function validateSingleBusinessPack(params: {
         message: `The documents reference ${unmatched.slice(0, 2).join(", ")} rather than ${params.onboardedBusinessName ?? "the onboarded business"}.`,
         recommended_action:
           `Confirm whether ${unmatched[0] ?? "the detected entity"} is a legal/trading name for ${params.onboardedBusinessName ?? "the onboarded business"}, or upload documents issued to the correct business.`,
-        points: 20
+        points: relatedSignals >= 2 ? 15 : 18
       };
     }
   } else if (unmatched.length >= 1) {
-    finding = {
-      key: "document_entity_mismatch",
-      title: "Some documents may not match the onboarded business",
-      severity: "medium",
-      status: "attention_needed",
-      message:
-        "One or more documents appear to reference different business entities. Review the pack to confirm all files belong to the same business.",
-      recommended_action: "Review unfamiliar business names and remove unrelated files before finalising the report.",
-      points: 8
-    };
+    // ratio tiers for partial match scenarios
+    if (matchRatio >= 0.9) {
+      finding = null;
+    } else if (matchRatio >= 0.6) {
+      finding = {
+        key: "document_entity_mismatch",
+        title: "Minor business naming variation detected",
+        severity: "low",
+        status: "attention_needed",
+        message: "Small naming variations were detected across documents and should be confirmed.",
+        recommended_action: "Confirm minor business naming differences before finalising the report.",
+        points: 4
+      };
+    } else if (matchRatio >= 0.3) {
+      finding = {
+        key: "document_entity_mismatch",
+        title: "Some documents may not match the onboarded business",
+        severity: "medium",
+        status: "attention_needed",
+        message:
+          "One or more documents appear to reference different business entities. Review the pack to confirm all files belong to the same business.",
+        recommended_action: "Review unfamiliar business names and remove unrelated files before finalising the report.",
+        points: 10
+      };
+    } else {
+      finding = {
+        key: "document_entity_mismatch",
+        title: "Documents may not match onboarded business",
+        severity: "high",
+        status: "attention_needed",
+        message:
+          "Documents are issued to a different legal entity and require verification before relying on this evidence.",
+        recommended_action:
+          "Confirm whether the detected entity is legally linked to the onboarded business, or upload documents issued to the correct legal entity.",
+        points: 18
+      };
+    }
+  }
+
+  if (process.env.NODE_ENV !== "production") {
+    console.log("ENTITY_MATCH_DEBUG", {
+      onboarded_name: params.onboardedBusinessName,
+      detected_names: producerNames,
+      normalized_matches: matched,
+      match_ratio: matchRatio,
+      severity: finding?.severity ?? null,
+      score_impact: finding?.points ?? 0
+    });
   }
 
   return {

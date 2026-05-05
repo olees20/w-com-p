@@ -25,10 +25,10 @@ function healthCheckStatusLabel(params: { activeCheck: HealthCheck | null; lates
 }
 
 function reportStatusLabel(report: Awaited<ReturnType<typeof buildHealthCheckReportForBusiness>>) {
-  if (
-    report.score.status === "compliant" &&
-    report.top_risks.some((r) => (r.rule_id ?? "") === "document_entity_mismatch")
-  ) {
+  if (report.score.status === "compliant" && report.entityVerificationRequired) {
+    return "Compliant (Entity Verification Required)";
+  }
+  if (report.score.status === "compliant" && report.top_risks.some((r) => (r.rule_id ?? "") === "document_entity_mismatch")) {
     return "Compliant (Review Recommended)";
   }
   return report.score.status;

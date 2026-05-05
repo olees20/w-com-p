@@ -136,6 +136,7 @@ export type HealthCheckReport = {
   duplicateDocumentFilenames: string[];
   canonicalDocumentIds: string[];
   canonicalDocumentFilenames: string[];
+  entityVerificationRequired?: boolean;
 };
 
 type NotUsedClassification = {
@@ -1370,10 +1371,9 @@ function verdictForMixedBusinessPack() {
 function verdictForEntityMismatch(params: { onboardedBusinessName: string | null; unmatchedNames: string[]; severity: "high" | "medium" | "low" }) {
   const observed = params.unmatchedNames.length ? params.unmatchedNames.join(", ") : "a different business name";
   if (params.severity === "high") {
-    const target = params.onboardedBusinessName ?? "the onboarded business";
-    return `The uploaded documents appear complete, but they reference ${observed}. Compliance cannot be clearly demonstrated for ${target} until this is confirmed.`;
+    return `The uploaded documents appear complete, but they are issued to a different legal entity (${observed}) and require verification before relying on this pack.`;
   }
-  return `Compliance appears to be demonstrated, but the business name differs (${observed}) and should be confirmed.`;
+  return `Compliance appears to be demonstrated, but the business name differs (${observed}) and should be confirmed before relying on this pack.`;
 }
 
 function overallAssessment(params: {
@@ -1389,7 +1389,7 @@ function overallAssessment(params: {
   entityMismatchAttention: boolean;
 }) {
   if (params.entityMismatchFail) return "Documents appear to belong to multiple businesses";
-  if (params.entityMismatchAttention) return "Evidence pack needs review (business name mismatch detected)";
+  if (params.entityMismatchAttention) return "Evidence pack usable (entity verification required)";
   if (params.incompleteEvidence) return "Evidence pack incomplete";
   if (params.maintenanceOnlyExpiredNow) return "Evidence pack usable (updates recommended)";
   const highOrMediumRisks = params.risks.filter((risk) => risk.severity === "high" || risk.severity === "medium").length;
@@ -2016,7 +2016,9 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     status: mergedScore >= 80 ? "compliant" : mergedScore >= 50 ? "attention_needed" : "at_risk",
     breakdown: mergedBreakdown
   } as const;
-  if (entityMismatchHigh && score.status === "compliant") {
+  const baselinePassRate = checks.length ? checks.filter((c) => c.result === "pass").length / checks.length : 0;
+  const entityVerificationRequired = entityMismatchHigh && entityValidation.match_ratio < 0.3 && baselinePassRate >= 0.9;
+  if (entityMismatchHigh && score.status === "compliant" && !entityVerificationRequired) {
     score = {
       ...score,
       status: "attention_needed"

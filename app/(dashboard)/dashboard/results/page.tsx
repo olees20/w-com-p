@@ -27,10 +27,10 @@ function scoreBadge(status: string) {
 }
 
 function statusLabel(report: Awaited<ReturnType<typeof buildHealthCheckReportForBusiness>>) {
-  if (
-    report.score.status === "compliant" &&
-    report.top_risks.some((r) => (r.rule_id ?? "") === "document_entity_mismatch")
-  ) {
+  if (report.score.status === "compliant" && report.entityVerificationRequired) {
+    return "Compliant (Entity Verification Required)";
+  }
+  if (report.score.status === "compliant" && report.top_risks.some((r) => (r.rule_id ?? "") === "document_entity_mismatch")) {
     return "Compliant (Review Recommended)";
   }
   return scoreBadge(report.score.status).label;

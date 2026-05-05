@@ -352,7 +352,7 @@ test("collection point address stays site address; transfer station stays destin
   assert.ok(!result.destination_names.includes("Unit A, 10 King Street, Leeds"));
 });
 
-test("graded mismatch: plausible related entity is medium severity with lower points", () => {
+test("graded mismatch: 0% match ratio is high severity even with shared operational context", () => {
   const docs: ReportDocument[] = [
     mkDoc({
       file_name: "wtn.pdf",
@@ -385,8 +385,8 @@ test("graded mismatch: plausible related entity is medium severity with lower po
 
   assert.equal(result.match_ratio, 0);
   assert.equal(result.finding?.key, "document_entity_mismatch");
-  assert.equal(result.finding?.severity, "medium");
-  assert.equal(result.finding?.points, 10);
+  assert.equal(result.finding?.severity, "high");
+  assert.ok((result.finding?.points ?? 0) >= 15);
 });
 
 test("different legal entity descriptors are not treated as minor naming variation", () => {
@@ -412,8 +412,8 @@ test("different legal entity descriptors are not treated as minor naming variati
 
   assert.equal(result.finding?.key, "document_entity_mismatch");
   assert.notEqual(result.finding?.severity, "low");
-  assert.equal(result.finding?.severity, "medium");
-  assert.equal(result.finding?.points, 10);
+  assert.equal(result.finding?.severity, "high");
+  assert.ok((result.finding?.points ?? 0) >= 15);
 });
 
 test("graded mismatch: unrelated entity remains high severity", () => {
@@ -439,4 +439,29 @@ test("graded mismatch: unrelated entity remains high severity", () => {
   assert.equal(result.finding?.key, "document_entity_mismatch");
   assert.equal(result.finding?.severity, "high");
   assert.equal(result.finding?.points, 20);
+});
+
+test("graded mismatch: 30-59% match ratio maps to medium severity", () => {
+  const docs: ReportDocument[] = [
+    mkDoc({
+      file_name: "doc-match.pdf",
+      ai_extracted_json: { customer_name: "Copper Kettle Bistro Ltd", carrier_name: "EcoLoop Waste Services Ltd" } as unknown as {
+        missing_fields?: string[];
+      }
+    }),
+    mkDoc({
+      file_name: "doc-unmatch.pdf",
+      ai_extracted_json: { customer_name: "Copper Kettle Holdings Ltd", carrier_name: "EcoLoop Waste Services Ltd" } as unknown as {
+        missing_fields?: string[];
+      }
+    })
+  ];
+  const result = validateSingleBusinessPack({
+    onboardedBusinessName: "Copper Kettle Bistro Ltd",
+    documents: docs
+  });
+  assert.ok(result.match_ratio >= 0.3 && result.match_ratio < 0.6);
+  assert.equal(result.finding?.key, "document_entity_mismatch");
+  assert.equal(result.finding?.severity, "medium");
+  assert.equal(result.finding?.points, 10);
 });
