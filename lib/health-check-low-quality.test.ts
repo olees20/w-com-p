@@ -78,7 +78,12 @@ test("low quality relevant docs are classified as RELEVANT_UNREADABLE and checks
       produces_hazardous_waste: false
     }
   });
-  assert.ok(score.score >= 20 && score.score <= 50);
+  assert.ok(score.score >= 35 && score.score <= 45);
+  assert.equal(score.breakdown.deductions.filter((d) => d.reason === "Core evidence present but unverifiable").length, 1);
+  assert.equal(
+    score.breakdown.deductions.filter((d) => d.reason.toLowerCase().includes("unreadable")).length,
+    0
+  );
 
   const derived = deriveMissingAndUnverifiableForTest({
     checks,

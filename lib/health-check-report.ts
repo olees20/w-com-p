@@ -1133,19 +1133,26 @@ function scoreFromChecks(params: { checks: BaselineCheck[]; docs: ReportDocument
     .filter((d) => d.document_type === "waste_transfer_note" || d.document_type === "invoice")
     .filter((d) => hasText(getCarrierNameFromDoc(d)));
   const irrelevantOnlyPack = docs.length > 0 && docs.every((d) => !getDocumentRelevance(d).used_in_assessment);
+  const coreUnverifiableDetected = [
+    "Waste Transfer Note present",
+    "Waste invoice or collection evidence present",
+    "Carrier licence evidence present",
+    "Supplier/contract evidence present"
+  ].some((name) => byName(name)?.result === "attention_needed");
 
   if (byName("Waste Transfer Note present")?.result === "fail") deductions.push({ reason: "Missing waste transfer note", points: 35 });
-  if (byName("Waste Transfer Note present")?.result === "attention_needed") deductions.push({ reason: "Waste transfer note detected but unreadable", points: 15 });
   if (byName("Carrier licence valid / not expired")?.result === "fail") deductions.push({ reason: "Carrier licence not valid at transfer date", points: 28 });
   if (byName("Carrier licence valid / not expired")?.result === "attention_needed") deductions.push({ reason: "Carrier licence expired now (valid at transfer)", points: 8 });
   if (byName("Carrier licence evidence present")?.result === "fail") deductions.push({ reason: "Missing carrier licence evidence", points: 25 });
-  if (byName("Carrier licence evidence present")?.result === "attention_needed") deductions.push({ reason: "Carrier licence evidence detected but unreadable", points: 12 });
   if (business.produces_food_waste && byName("Food waste evidence present")?.result === "fail") deductions.push({ reason: "Missing food waste evidence", points: 25 });
   if (business.produces_hazardous_waste && byName("Hazardous waste consignment note present")?.result === "fail") deductions.push({ reason: "Missing hazardous waste consignment note", points: 30 });
+  if (byName("Supplier/contract evidence present")?.result === "fail" && supplierEvidenceFromOps.length === 0) {
+    deductions.push({ reason: "Missing supplier contract evidence", points: 8 });
+  }
   if (byName("Supplier/contract evidence present")?.result === "attention_needed" && supplierEvidenceFromOps.length === 0) {
     deductions.push({ reason: "Missing supplier contract evidence", points: 8 });
   }
-  if (byName("Waste invoice or collection evidence present")?.result === "attention_needed") deductions.push({ reason: "Invoice/collection evidence detected but unreadable", points: 15 });
+  if (coreUnverifiableDetected) deductions.push({ reason: "Core evidence present but unverifiable", points: 22 });
   if (byName("Waste destination present on WTN where available")?.result === "attention_needed") deductions.push({ reason: "Missing destination detail on WTN", points: 8 });
   if (byName("EWC code present on WTN where available")?.result === "attention_needed") deductions.push({ reason: "Missing EWC code on WTN", points: 8 });
   if (irrelevantOnlyPack) deductions.push({ reason: "No relevant waste compliance evidence detected", points: 25 });
@@ -1933,7 +1940,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   );
   const unreadablePriorityActions: string[] = [];
   if (wtnState.detected_unverifiable || invoiceState.detected_unverifiable) {
-    unreadablePriorityActions.push("Re-upload clearer copies of the waste transfer note and invoice.");
+    unreadablePriorityActions.push("Re-upload clearer copies of uploaded waste documentation to enable verification.");
   }
   const foodWasteMissing = business.produces_food_waste && checks.find((c) => c.check_name === "Food waste evidence present")?.result === "fail";
   const refinedBusinessActions = wtnMissing
