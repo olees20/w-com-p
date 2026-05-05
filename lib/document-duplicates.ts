@@ -100,13 +100,14 @@ function invoiceSignature(doc: DuplicateDoc) {
     getJsonText(p, ["raw_text", "extracted_text", "text", "raw_text_excerpt"]) ||
     doc.ai_summary ||
     "";
-  const invoiceNumberRaw =
-    getJsonText(p, ["invoice_number", "invoice_no", "invoice_id", "reference", "ref", "inv_no", "document_number"]) ||
-    extractInvoiceNumberFromText(rawText);
+  const invoiceNumberRaw = extractInvoiceNumber(doc);
+  const customerRaw =
+    getJsonText(p, ["customer_name", "client_name", "invoice_recipient", "customer", "client", "bill_to", "recipient_name", "account_name"]) ||
+    extractCustomerFromText(rawText);
   return {
     number: normalizeInvoiceNumber(invoiceNumberRaw),
     supplier: norm(doc.extracted_supplier ?? getJsonText(p, ["invoice_issuer", "supplier", "provider"])),
-    customer: norm(getJsonText(p, ["customer_name", "client_name", "invoice_recipient", "customer", "client", "bill_to", "recipient_name", "account_name"])),
+    customer: norm(customerRaw),
     date: normDate(doc.extracted_date ?? getJsonText(p, ["invoice_date", "document_date", "date"])),
     services: norm(getJsonText(p, ["service_lines", "line_items", "service_description", "description", "services", "items"])),
     amount: norm(getJsonText(p, ["total_amount", "amount_due", "total", "invoice_total", "grand_total"]))
@@ -114,12 +115,13 @@ function invoiceSignature(doc: DuplicateDoc) {
 }
 
 function normalizeInvoiceNumber(v: string | null | undefined) {
-  return (v ?? "").toUpperCase().replace(/\s+/g, "").trim();
+  return (v ?? "").toUpperCase().replace(/[\s-]+/g, "").trim();
 }
 
 function extractInvoiceNumberFromText(text: string) {
   const patterns = [
-    /invoice\s*(?:no|number|#)\s*[:\-]?\s*([A-Z]{1,5}-?\d{2,}[\w-]*)/i,
+    /invoice\s*(?:no\.?|number|#)?\s*[:\-]?\s*([A-Z]{1,5}[- ]?\d{3,})/i,
+    /(?:inv|invoice)[- ]?(\d{3,})/i,
     /invoice\s+([A-Z]{1,5}-?\d{2,}[\w-]*)/i,
     /\b(INV-?\d{2,}[A-Z0-9-]*)\b/i
   ];
@@ -128,6 +130,31 @@ function extractInvoiceNumberFromText(text: string) {
     if (match?.[1]) return match[1];
   }
   return "";
+}
+
+function extractCustomerFromText(text: string) {
+  const patterns = [
+    /(?:for|to)\s+client\s+([A-Z][A-Za-z0-9&.,' -]{3,})/i,
+    /client\s*[:\-]?\s*([A-Z][A-Za-z0-9&.,' -]{3,})/i,
+    /customer\s*[:\-]?\s*([A-Z][A-Za-z0-9&.,' -]{3,})/i
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) return match[1].trim();
+  }
+  return "";
+}
+
+export function extractInvoiceNumber(doc: DuplicateDoc) {
+  const p = doc.ai_extracted_json ?? {};
+  const rawText =
+    getJsonText(p, ["summary", "raw_text_excerpt", "raw_text", "extracted_text", "text"]) ||
+    doc.ai_summary ||
+    "";
+  return (
+    getJsonText(p, ["invoice_number", "invoice_no", "reference"]) ||
+    extractInvoiceNumberFromText(rawText)
+  );
 }
 
 function wtnSignature(doc: DuplicateDoc) {

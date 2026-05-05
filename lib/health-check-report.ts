@@ -1632,6 +1632,12 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   const canonicalDocumentFilenames = Array.from(
     new Set(duplicateAnalysisInput.filter((d) => canonicalDocumentIds.includes(d.id)).map((d) => d.file_name))
   );
+  if (process.env.NODE_ENV !== "production") {
+    console.log("DUPLICATE_REPORT_SUMMARY", {
+      duplicateDocumentsCount: duplicatePairs.length,
+      duplicatePairs
+    });
+  }
 
   const checks = buildChecks({ business, docs, rules: refs, sources: sourceRefs });
   const entityValidation = validateSingleBusinessPack({
@@ -1881,7 +1887,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     `Business-level risks (high/medium): ${countHighMediumRisks(topRisks)}`,
     `Cross-document ${pluralize(nonMaintenanceConsistencyFindings.length, "finding", "findings")}: ${nonMaintenanceConsistencyFindings.length}`,
     `Irrelevant/unknown docs: ${docs.filter((d) => !getDocumentRelevance(d).used_in_assessment).length}/${docs.length}`,
-    `Duplicate docs flagged: ${nonMaintenanceConsistencyFindings.find((f) => f.key === "duplicate_documents")?.evidence.length ?? 0}`,
+    `Duplicate docs flagged: ${duplicatePairs.length}`,
     `Source coverage: ${checks.filter((c) => !c.source_reference.startsWith("No source reference available")).length}/${checks.length}`
   ];
   if (entityValidation.finding) {

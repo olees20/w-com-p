@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { detectDuplicateDocuments } from "@/lib/document-duplicates";
+import { detectDuplicateDocuments, extractInvoiceNumber } from "@/lib/document-duplicates";
 
 const mk = (overrides: Partial<{
   id: string;
@@ -78,6 +78,31 @@ test("filename copy + same supplier/customer/date is duplicate", () => {
     mk({ id: "b", file_name: "invoice_april_copy.pdf", extracted_supplier: "EcoLoop", extracted_date: "2026-04-26", ai_extracted_json: { customer_name: "Copper Kettle" } })
   ];
   assert.equal(detectDuplicateDocuments(docs).length, 1);
+});
+
+test("extracts invoice number from summary text and matches duplicates (EL-90199)", () => {
+  const a = mk({
+    id: "a",
+    file_name: "invoice_april.pdf",
+    extracted_supplier: "EcoLoop Waste Services Ltd",
+    extracted_date: "2026-04-26",
+    ai_summary:
+      "Invoice EL-90199 issued by EcoLoop Waste Services Ltd on 26 April 2026 to client Copper Kettle Bistro Ltd...",
+    ai_extracted_json: {}
+  });
+  const b = mk({
+    id: "b",
+    file_name: "invoice_april_copy.pdf",
+    extracted_supplier: "EcoLoop Waste Services Ltd",
+    extracted_date: "2026-04-26",
+    ai_summary:
+      "Invoice EL-90199 issued by EcoLoop Waste Services Ltd on 26 April 2026 for client Copper Kettle Bistro Ltd...",
+    ai_extracted_json: {}
+  });
+
+  assert.equal(extractInvoiceNumber(a).toUpperCase().replace(/[\s-]+/g, ""), "EL90199");
+  assert.equal(extractInvoiceNumber(b).toUpperCase().replace(/[\s-]+/g, ""), "EL90199");
+  assert.equal(detectDuplicateDocuments([a, b]).length, 1);
 });
 
 test("copy filename with different invoice number/date is not duplicate", () => {
