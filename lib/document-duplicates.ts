@@ -57,6 +57,19 @@ function getJsonText(payload: Record<string, unknown> | null | undefined, keys: 
   for (const key of keys) {
     const value = payload[key];
     if (typeof value === "string" && value.trim()) return value.trim();
+    if (Array.isArray(value)) {
+      const flat = value
+        .flatMap((item) => {
+          if (typeof item === "string") return [item];
+          if (item && typeof item === "object") {
+            return Object.values(item as Record<string, unknown>).filter((v): v is string => typeof v === "string");
+          }
+          return [];
+        })
+        .join(" ")
+        .trim();
+      if (flat) return flat;
+    }
   }
   return "";
 }
@@ -83,12 +96,12 @@ function getHash(doc: DuplicateDoc) {
 function invoiceSignature(doc: DuplicateDoc) {
   const p = doc.ai_extracted_json ?? {};
   return {
-    number: norm(getJsonText(p, ["invoice_number", "invoice_no", "reference", "ref"])),
+    number: norm(getJsonText(p, ["invoice_number", "invoice_no", "invoice_id", "reference", "ref", "inv_no", "document_number"])),
     supplier: norm(doc.extracted_supplier ?? getJsonText(p, ["invoice_issuer", "supplier", "provider"])),
-    customer: norm(getJsonText(p, ["customer_name", "client_name", "invoice_recipient", "customer", "client"])),
-    date: normDate(doc.extracted_date ?? getJsonText(p, ["invoice_date", "document_date"])),
-    services: norm(getJsonText(p, ["service_lines", "line_items", "service_description", "description"])),
-    amount: norm(getJsonText(p, ["total_amount", "amount_due", "total"]))
+    customer: norm(getJsonText(p, ["customer_name", "client_name", "invoice_recipient", "customer", "client", "bill_to", "recipient_name", "account_name"])),
+    date: normDate(doc.extracted_date ?? getJsonText(p, ["invoice_date", "document_date", "date"])),
+    services: norm(getJsonText(p, ["service_lines", "line_items", "service_description", "description", "services", "items"])),
+    amount: norm(getJsonText(p, ["total_amount", "amount_due", "total", "invoice_total", "grand_total"]))
   };
 }
 
@@ -147,6 +160,7 @@ function sameInvoice(a: DuplicateDoc, b: DuplicateDoc) {
     invoiceNumberMatch ||
     (supplierMatch && customerMatch && dateMatch && servicesMatch) ||
     (copySignal && supplierMatch && customerMatch && dateMatch && (invoiceNumberMatch || !sa.number || !sb.number)) ||
+    (copySignal && supplierMatch && dateMatch && servicesMatch && (!sa.customer || !sb.customer)) ||
     score >= 6;
 
   return duplicate;
@@ -239,8 +253,13 @@ export function detectDuplicateDocuments<T extends DuplicateDoc>(docs: T[]): Dup
   const pairs: DuplicatePair[] = [];
   if (process.env.NODE_ENV !== "production") {
     for (const doc of docs) {
-      const p = doc.ai_extracted_json ?? {};
+      const p = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
       const inv = invoiceSignature(doc);
+      const rawTextExcerpt =
+        (typeof p.raw_text === "string" && p.raw_text.slice(0, 300)) ||
+        (typeof p.extracted_text === "string" && p.extracted_text.slice(0, 300)) ||
+        (typeof p.text === "string" && p.text.slice(0, 300)) ||
+        (doc.ai_summary ?? "").slice(0, 300);
       console.log("[duplicates][input]", {
         filename: doc.file_name,
         document_type: doc.document_type,
@@ -250,9 +269,9 @@ export function detectDuplicateDocuments<T extends DuplicateDoc>(docs: T[]): Dup
         document_or_invoice_date: inv.date || null,
         service_lines: inv.services || null,
         total_amount: inv.amount || null,
-        file_hash: getHash(doc) || null
+        file_hash: getHash(doc) || null,
+        raw_text_excerpt: rawTextExcerpt
       });
-      void p;
     }
   }
   for (let i = 0; i < docs.length; i += 1) {

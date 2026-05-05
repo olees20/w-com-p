@@ -57,6 +57,19 @@ function overrideIrrelevantContributorLine(lines: string[], irrelevant: number, 
   return replaced ? next : [...next, replacement];
 }
 
+function overrideDuplicateContributorLine(lines: string[], duplicateCount: number) {
+  const replacement = `Duplicate docs flagged: ${duplicateCount}`;
+  let replaced = false;
+  const next = lines.map((line) => {
+    if (line.startsWith("Duplicate docs flagged:")) {
+      replaced = true;
+      return replacement;
+    }
+    return line;
+  });
+  return replaced ? next : [...next, replacement];
+}
+
 export default async function ResultsPage() {
   const supabase = await createServerClient();
   const {
@@ -110,6 +123,10 @@ export default async function ResultsPage() {
     report.confidence_contributors,
     usageSummary.irrelevantUnknownDocsCount,
     usageSummary.totalDocs
+  );
+  const confidenceContributorsWithDuplicates = overrideDuplicateContributorLine(
+    confidenceContributorsForDisplay,
+    report.duplicateDocumentsCount ?? 0
   );
 
   return (
@@ -166,7 +183,7 @@ export default async function ResultsPage() {
       <section className="app-panel p-5">
         <h2 className="text-lg font-bold text-[#111827]">Confidence Contributors</h2>
         <div className="mt-3 space-y-2">
-          {confidenceContributorsForDisplay.map((item) => (
+          {confidenceContributorsWithDuplicates.map((item) => (
             <p key={item} className="text-sm text-[#374151]">- {item}</p>
           ))}
         </div>
@@ -241,7 +258,7 @@ export default async function ResultsPage() {
           <p><span className="font-semibold">Licence numbers detected:</span> {report.consistency_summary.licence_numbers_detected.length ? report.consistency_summary.licence_numbers_detected.join(", ") : "None detected"}</p>
           <p><span className="font-semibold">Sites/addresses detected:</span> {report.consistency_summary.sites_or_addresses_detected.length ? report.consistency_summary.sites_or_addresses_detected.join(", ") : "None detected"}</p>
           <p><span className="font-semibold">Document date range:</span> {report.consistency_summary.document_date_range.from ?? "N/A"} to {report.consistency_summary.document_date_range.to ?? "N/A"}</p>
-          <p><span className="font-semibold">Duplicate documents detected:</span> {report.consistency_summary.duplicate_documents_detected}</p>
+          <p><span className="font-semibold">Duplicate documents detected:</span> {report.duplicateDocumentsCount ?? report.consistency_summary.duplicate_documents_detected}</p>
         </div>
       </section>
 
