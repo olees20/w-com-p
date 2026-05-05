@@ -389,6 +389,33 @@ test("graded mismatch: plausible related entity is medium severity with lower po
   assert.equal(result.finding?.points, 10);
 });
 
+test("different legal entity descriptors are not treated as minor naming variation", () => {
+  const docs: ReportDocument[] = [
+    mkDoc({
+      file_name: "wtn-pack-l.pdf",
+      document_type: "waste_transfer_note",
+      extracted_supplier: "EcoLoop Waste Services Ltd",
+      extracted_date: "2026-04-22",
+      ai_extracted_json: {
+        producer_name: "Copper Kettle Holdings Ltd",
+        carrier_name: "EcoLoop Waste Services Ltd",
+        destination: "Avonmouth Resource Recovery Facility",
+        current_holder_address: "22 Castle Street, Bristol BS1 2BQ"
+      } as unknown as { missing_fields?: string[] }
+    })
+  ];
+
+  const result = validateSingleBusinessPack({
+    onboardedBusinessName: "Copper Kettle Bistro Ltd",
+    documents: docs
+  });
+
+  assert.equal(result.finding?.key, "document_entity_mismatch");
+  assert.notEqual(result.finding?.severity, "low");
+  assert.equal(result.finding?.severity, "medium");
+  assert.equal(result.finding?.points, 10);
+});
+
 test("graded mismatch: unrelated entity remains high severity", () => {
   const docs: ReportDocument[] = [
     mkDoc({

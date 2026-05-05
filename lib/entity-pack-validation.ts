@@ -75,6 +75,16 @@ function hasSimilarBusinessName(a: string | null | undefined, b: string | null |
   return ratio >= 0.5;
 }
 
+function isMinorNameVariation(a: string | null | undefined, b: string | null | undefined) {
+  if (!a || !b) return false;
+  const canonical = (value: string) =>
+    normalizeName(value)
+      .replace(/\b(ltd|limited|company|co|the)\b/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  return canonical(a) === canonical(b);
+}
+
 function unique(values: string[]) {
   return Array.from(new Set(values.filter((v) => v.trim())));
 }
@@ -414,7 +424,8 @@ export function validateSingleBusinessPack(params: {
     const similarNameSignal = unmatched.some((name) => hasSimilarBusinessName(name, params.onboardedBusinessName));
     const relatedSignals = [sameSiteAddressSignal, sameCarrierSignal, sameDateSignal, sameWasteFlowSignal, similarNameSignal].filter(Boolean).length;
 
-    if (similarNameSignal && relatedSignals >= 3) {
+    const minorVariationSignal = unmatched.some((name) => isMinorNameVariation(name, params.onboardedBusinessName));
+    if (minorVariationSignal && relatedSignals >= 3) {
       finding = {
         key: "document_entity_mismatch",
         title: "Minor business naming variation detected",
