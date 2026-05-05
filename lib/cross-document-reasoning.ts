@@ -1,5 +1,6 @@
 import type { ReportDocument, ReportAlert } from "@/lib/health-check-report";
 import { buildCanonicalCarrierSupplierNames, carrierEntitiesForDocument } from "@/lib/entity-pack-validation";
+import { detectDuplicateDocuments } from "@/lib/document-duplicates";
 
 type BusinessInfo = {
   produces_food_waste: boolean | null;
@@ -329,29 +330,20 @@ export function runCrossDocumentReasoning(params: {
     });
   }
 
-  const duplicateKeys = new Map<string, ReportDocument[]>();
-  for (const doc of processedDocs.filter((d) => d.document_type === "waste_transfer_note")) {
-    const key = [
-      doc.document_type,
-      doc.extracted_date ?? "",
-      normalizeName(doc.extracted_supplier),
-      doc.extracted_ewc_code ?? "",
-      normalizeName(getDestination(doc))
-    ].join("|");
-    const arr = duplicateKeys.get(key) ?? [];
-    arr.push(doc);
-    duplicateKeys.set(key, arr);
-  }
-
-  const duplicateGroups = Array.from(duplicateKeys.values()).filter((group) => group.length > 1);
-  if (duplicateGroups.length) {
+  const duplicatePairs = detectDuplicateDocuments(
+    processedDocs.filter((d) => isComplianceDoc(d)).map((d) => ({
+      ...d,
+      ai_extracted_json: (d.ai_extracted_json ?? null) as Record<string, unknown> | null
+    }))
+  );
+  if (duplicatePairs.length) {
     findings.push({
       key: "duplicate_documents",
       title: "Duplicate document detected",
       severity: "low",
       status: "info",
       message: "Likely duplicate documents were detected and are not counted as additional evidence.",
-      evidence: duplicateGroups.flatMap((g) => g.map((d) => d.file_name)),
+      evidence: duplicatePairs.map((p) => p.reason),
       recommended_action: "No action required unless duplicates were uploaded in error.",
       points: 0,
       affects_confidence: false

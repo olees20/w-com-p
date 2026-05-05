@@ -282,3 +282,75 @@ test("carrier conflict evidence excludes destination/facility entities", () => {
   assert.ok(conflict?.evidence.some((line) => line.includes("GreenCycle Waste Ltd")));
   assert.ok(!conflict?.evidence.some((line) => line.includes("Leeds Waste Processing Facility")));
 });
+
+test("pack I detects invoice duplicate as informational only", () => {
+  const result = runCrossDocumentReasoning({
+    business: { produces_food_waste: false, produces_hazardous_waste: false },
+    openAlerts: [],
+    documents: [
+      {
+        ...baseDoc,
+        id: "i1",
+        file_name: "invoice_april.pdf",
+        document_type: "invoice",
+        extracted_supplier: "GreenCycle Waste Ltd",
+        extracted_date: "2026-04-14",
+        extracted_licence_number: null,
+        ai_extracted_json: {
+          invoice_number: "INV-APR-001",
+          invoice_issuer: "GreenCycle Waste Ltd",
+          client_name: "Bean & Brew Cafe Ltd",
+          service_lines: "General waste collection; Recycling collection"
+        } as unknown as { missing_fields?: string[] }
+      },
+      {
+        ...baseDoc,
+        id: "i2",
+        file_name: "invoice_april_copy.pdf",
+        document_type: "invoice",
+        extracted_supplier: "GreenCycle Waste Ltd",
+        extracted_date: "2026-04-14",
+        extracted_licence_number: null,
+        ai_extracted_json: {
+          invoice_number: "INV-APR-001",
+          invoice_issuer: "GreenCycle Waste Ltd",
+          client_name: "Bean & Brew Cafe Ltd",
+          service_lines: "General waste collection; Recycling collection"
+        } as unknown as { missing_fields?: string[] }
+      },
+      {
+        ...baseDoc,
+        id: "i3",
+        file_name: "wtn_valid.pdf",
+        document_type: "waste_transfer_note",
+        extracted_supplier: "GreenCycle Waste Ltd",
+        extracted_date: "2026-04-14",
+        extracted_licence_number: "CBDU123456",
+        extracted_ewc_code: "20 03 01",
+        waste_type: "Mixed Municipal Waste",
+        ai_extracted_json: {
+          destination: "Leeds Waste Processing Facility"
+        } as unknown as { missing_fields?: string[] }
+      },
+      {
+        ...baseDoc,
+        id: "i4",
+        file_name: "carrier_licence_valid.pdf",
+        document_type: "carrier_licence",
+        extracted_supplier: "GreenCycle Waste Ltd",
+        extracted_date: null,
+        extracted_licence_number: "CBDU123456",
+        expiry_date: "2027-04-01"
+      }
+    ]
+  });
+
+  const dup = result.consistency_findings.find((f) => f.key === "duplicate_documents");
+  assert.ok(dup);
+  assert.equal(dup?.status, "info");
+  assert.equal(dup?.severity, "low");
+  assert.equal(dup?.evidence.length, 1);
+  assert.ok(dup?.evidence[0].includes("invoice_april_copy.pdf"));
+  assert.ok(dup?.evidence[0].includes("invoice_april.pdf"));
+  assert.equal(result.score_deductions.some((d) => d.reason.toLowerCase().includes("duplicate")), false);
+});

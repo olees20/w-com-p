@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { runCrossDocumentReasoning, type ConsistencyFinding } from "@/lib/cross-document-reasoning";
 import { validateSingleBusinessPack } from "@/lib/entity-pack-validation";
+import { dedupeCanonicalDocuments } from "@/lib/document-duplicates";
 
 export type CheckResult = "pass" | "attention_needed" | "fail" | "cannot_verify";
 
@@ -754,7 +755,13 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
       }
     ];
   }
-  const processed = relevantDocs.filter(isProcessed);
+  const processedRaw = relevantDocs.filter(isProcessed);
+  const processed = dedupeCanonicalDocuments(
+    processedRaw.map((d) => ({
+      ...d,
+      ai_extracted_json: (d.ai_extracted_json ?? null) as Record<string, unknown> | null
+    }))
+  ).canonical as ReportDocument[];
   const wtDocs = processed.filter((d) => d.document_type === "waste_transfer_note");
   const carrierDocs = docs.filter(
     (d) => d.document_type === "carrier_licence" && (d.processing_status === "processed" || d.processing_status === "review") && hasValidCarrierLicenceFields(d)
