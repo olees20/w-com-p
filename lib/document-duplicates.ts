@@ -20,6 +20,21 @@ export type DuplicatePair = {
   reason: string;
 };
 
+export type DuplicateComparisonDebug = {
+  a_file: string;
+  b_file: string;
+  document_type: string | null;
+  exact_hash_match: boolean;
+  filename_copy_signal: boolean;
+  invoice_number_match: boolean;
+  supplier_match: boolean;
+  customer_match: boolean;
+  date_match: boolean;
+  service_lines_match: boolean;
+  final_duplicate_score: number;
+  duplicate: boolean;
+};
+
 function norm(v: string | null | undefined) {
   return (v ?? "")
     .toLowerCase()
@@ -113,18 +128,28 @@ function contractSignature(doc: DuplicateDoc) {
 function sameInvoice(a: DuplicateDoc, b: DuplicateDoc) {
   const sa = invoiceSignature(a);
   const sb = invoiceSignature(b);
-  if (sa.number && sb.number && sa.number === sb.number) return true;
-  const strong =
-    sa.supplier && sa.customer && sa.date && sa.services &&
-    sa.supplier === sb.supplier &&
-    sa.customer === sb.customer &&
-    sa.date === sb.date &&
-    sa.services === sb.services;
-  if (strong) return true;
-  if (hasCopyFilenameHint(b.file_name) || hasCopyFilenameHint(a.file_name)) {
-    return sa.supplier === sb.supplier && sa.customer === sb.customer && sa.date === sb.date && (!!sa.number ? sa.number === sb.number : true);
-  }
-  return false;
+  const invoiceNumberMatch = Boolean(sa.number && sb.number && sa.number === sb.number);
+  const supplierMatch = Boolean(sa.supplier && sb.supplier && sa.supplier === sb.supplier);
+  const customerMatch = Boolean(sa.customer && sb.customer && sa.customer === sb.customer);
+  const dateMatch = Boolean(sa.date && sb.date && sa.date === sb.date);
+  const servicesMatch = Boolean(sa.services && sb.services && sa.services === sb.services);
+  const copySignal = hasCopyFilenameHint(b.file_name) || hasCopyFilenameHint(a.file_name);
+
+  let score = 0;
+  if (invoiceNumberMatch) score += 4;
+  if (supplierMatch) score += 1;
+  if (customerMatch) score += 1;
+  if (dateMatch) score += 1;
+  if (servicesMatch) score += 1;
+  if (copySignal && supplierMatch && customerMatch && dateMatch) score += 2;
+
+  const duplicate =
+    invoiceNumberMatch ||
+    (supplierMatch && customerMatch && dateMatch && servicesMatch) ||
+    (copySignal && supplierMatch && customerMatch && dateMatch && (invoiceNumberMatch || !sa.number || !sb.number)) ||
+    score >= 6;
+
+  return duplicate;
 }
 
 function sameWtn(a: DuplicateDoc, b: DuplicateDoc) {
@@ -173,12 +198,76 @@ function isDuplicatePair(a: DuplicateDoc, b: DuplicateDoc) {
   }
 }
 
+function compareInvoiceDebug(a: DuplicateDoc, b: DuplicateDoc): DuplicateComparisonDebug {
+  const hashA = getHash(a);
+  const hashB = getHash(b);
+  const exactHashMatch = Boolean(hashA && hashB && hashA === hashB);
+  const copySignal = hasCopyFilenameHint(a.file_name) || hasCopyFilenameHint(b.file_name);
+  const sa = invoiceSignature(a);
+  const sb = invoiceSignature(b);
+  const invoiceNumberMatch = Boolean(sa.number && sb.number && sa.number === sb.number);
+  const supplierMatch = Boolean(sa.supplier && sb.supplier && sa.supplier === sb.supplier);
+  const customerMatch = Boolean(sa.customer && sb.customer && sa.customer === sb.customer);
+  const dateMatch = Boolean(sa.date && sb.date && sa.date === sb.date);
+  const servicesMatch = Boolean(sa.services && sb.services && sa.services === sb.services);
+  let score = 0;
+  if (exactHashMatch) score += 10;
+  if (invoiceNumberMatch) score += 4;
+  if (supplierMatch) score += 1;
+  if (customerMatch) score += 1;
+  if (dateMatch) score += 1;
+  if (servicesMatch) score += 1;
+  if (copySignal && supplierMatch && customerMatch && dateMatch) score += 2;
+  const duplicate = exactHashMatch || sameInvoice(a, b);
+  return {
+    a_file: a.file_name,
+    b_file: b.file_name,
+    document_type: a.document_type,
+    exact_hash_match: exactHashMatch,
+    filename_copy_signal: copySignal,
+    invoice_number_match: invoiceNumberMatch,
+    supplier_match: supplierMatch,
+    customer_match: customerMatch,
+    date_match: dateMatch,
+    service_lines_match: servicesMatch,
+    final_duplicate_score: score,
+    duplicate
+  };
+}
+
 export function detectDuplicateDocuments<T extends DuplicateDoc>(docs: T[]): DuplicatePair[] {
   const pairs: DuplicatePair[] = [];
+  if (process.env.NODE_ENV !== "production") {
+    for (const doc of docs) {
+      const p = doc.ai_extracted_json ?? {};
+      const inv = invoiceSignature(doc);
+      console.log("[duplicates][input]", {
+        filename: doc.file_name,
+        document_type: doc.document_type,
+        invoice_number: inv.number || null,
+        supplier_or_invoice_issuer: inv.supplier || null,
+        customer_or_client: inv.customer || null,
+        document_or_invoice_date: inv.date || null,
+        service_lines: inv.services || null,
+        total_amount: inv.amount || null,
+        file_hash: getHash(doc) || null
+      });
+      void p;
+    }
+  }
   for (let i = 0; i < docs.length; i += 1) {
     const a = docs[i];
     for (let j = i + 1; j < docs.length; j += 1) {
       const b = docs[j];
+      if (process.env.NODE_ENV !== "production" && (a.document_type === "invoice" || b.document_type === "invoice")) {
+        const debug = compareInvoiceDebug(a, b);
+        if (
+          a.file_name.toLowerCase().includes("invoice_april") ||
+          b.file_name.toLowerCase().includes("invoice_april")
+        ) {
+          console.log("[duplicates][pair-debug]", debug);
+        }
+      }
       if (!isDuplicatePair(a, b)) continue;
       pairs.push({
         canonicalId: a.id,

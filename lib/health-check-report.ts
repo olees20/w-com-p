@@ -1,7 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { runCrossDocumentReasoning, type ConsistencyFinding } from "@/lib/cross-document-reasoning";
 import { validateSingleBusinessPack } from "@/lib/entity-pack-validation";
-import { dedupeCanonicalDocuments } from "@/lib/document-duplicates";
+import { dedupeCanonicalDocuments, detectDuplicateDocuments } from "@/lib/document-duplicates";
 
 export type CheckResult = "pass" | "attention_needed" | "fail" | "cannot_verify";
 
@@ -122,6 +122,18 @@ export type HealthCheckReport = {
     used_in_assessment: boolean;
   }>;
   noRelevantEvidenceDetected: boolean;
+  duplicateDocumentsCount: number;
+  duplicatePairs: Array<{
+    canonicalId: string;
+    duplicateId: string;
+    canonicalFile: string;
+    duplicateFile: string;
+    reason: string;
+  }>;
+  duplicateDocumentIds: string[];
+  duplicateDocumentFilenames: string[];
+  canonicalDocumentIds: string[];
+  canonicalDocumentFilenames: string[];
 };
 
 type NotUsedClassification = {
@@ -277,6 +289,30 @@ function buildUsageSummary(docs: ReportDocument[]) {
 
 export function buildUsageSummaryForTest(docs: ReportDocument[]) {
   return buildUsageSummary(docs);
+}
+
+export function buildDuplicateSummaryForTest(docs: ReportDocument[]) {
+  const input = docs
+    .filter((d) => ["waste_transfer_note", "invoice", "carrier_licence", "contract", "hazardous_waste_note", "recycling_report"].includes(d.document_type ?? ""))
+    .map((d) => ({
+      ...d,
+      ai_extracted_json: (d.ai_extracted_json ?? null) as Record<string, unknown> | null
+    }));
+  const duplicatePairs = detectDuplicateDocuments(input);
+  const duplicateDocumentIds = Array.from(new Set(duplicatePairs.map((p) => p.duplicateId)));
+  const duplicateDocumentFilenames = Array.from(new Set(duplicatePairs.map((p) => p.duplicateFile)));
+  const canonicalDocumentIds = Array.from(new Set(input.map((d) => d.id).filter((id) => !duplicateDocumentIds.includes(id))));
+  const canonicalDocumentFilenames = Array.from(
+    new Set(input.filter((d) => canonicalDocumentIds.includes(d.id)).map((d) => d.file_name))
+  );
+  return {
+    duplicateDocumentsCount: duplicatePairs.length,
+    duplicatePairs,
+    duplicateDocumentIds,
+    duplicateDocumentFilenames,
+    canonicalDocumentIds,
+    canonicalDocumentFilenames
+  };
 }
 
 function isIrrelevantOnlyPack(usageSummary: {
@@ -1583,6 +1619,19 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   const openAlerts = (alerts ?? []) as ReportAlert[];
   const refs = (rules ?? []) as RuleRef[];
   const sourceRefs = (sources ?? []) as SourceRef[];
+  const duplicateAnalysisInput = docs
+    .filter((d) => ["waste_transfer_note", "invoice", "carrier_licence", "contract", "hazardous_waste_note", "recycling_report"].includes(d.document_type ?? ""))
+    .map((d) => ({
+      ...d,
+      ai_extracted_json: (d.ai_extracted_json ?? null) as Record<string, unknown> | null
+    }));
+  const duplicatePairs = detectDuplicateDocuments(duplicateAnalysisInput);
+  const duplicateDocumentIds = Array.from(new Set(duplicatePairs.map((p) => p.duplicateId)));
+  const duplicateDocumentFilenames = Array.from(new Set(duplicatePairs.map((p) => p.duplicateFile)));
+  const canonicalDocumentIds = Array.from(new Set(duplicateAnalysisInput.map((d) => d.id).filter((id) => !duplicateDocumentIds.includes(id))));
+  const canonicalDocumentFilenames = Array.from(
+    new Set(duplicateAnalysisInput.filter((d) => canonicalDocumentIds.includes(d.id)).map((d) => d.file_name))
+  );
 
   const checks = buildChecks({ business, docs, rules: refs, sources: sourceRefs });
   const entityValidation = validateSingleBusinessPack({
@@ -1988,6 +2037,12 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     documentsNotUsedCount: usageSummary.documentsNotUsedCount,
     usedDocumentsCount: usageSummary.usedDocumentsCount,
     debug_document_relevance: process.env.NODE_ENV !== "production" ? debugDocumentRelevance : undefined,
-    noRelevantEvidenceDetected: irrelevantOnlyPack
+    noRelevantEvidenceDetected: irrelevantOnlyPack,
+    duplicateDocumentsCount: duplicatePairs.length,
+    duplicatePairs,
+    duplicateDocumentIds,
+    duplicateDocumentFilenames,
+    canonicalDocumentIds,
+    canonicalDocumentFilenames
   };
 }
