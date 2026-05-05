@@ -1084,11 +1084,16 @@ function deriveMissingAndUnverifiable(params: {
   const wtnState = getEvidenceState(checks, "Waste Transfer Note present");
   const invoiceState = getEvidenceState(checks, "Waste invoice or collection evidence present");
   const carrierState = getEvidenceState(checks, "Carrier licence evidence present");
+  const hasCoreUnverifiable = wtnState.detected_unverifiable || invoiceState.detected_unverifiable;
   const missingDocs: string[] = [];
   if (wtnState.missing) missingDocs.push("Waste transfer note");
   if (carrierState.missing) missingDocs.push("Carrier licence evidence");
-  if (checks.find((c) => c.check_name === "Supplier/contract evidence present")?.result === "fail") missingDocs.push("Supplier/contract evidence");
-  if (producesFoodWaste && checks.find((c) => c.check_name === "Food waste evidence present")?.result === "fail") missingDocs.push("Food waste documentation");
+  if (!hasCoreUnverifiable && checks.find((c) => c.check_name === "Supplier/contract evidence present")?.result === "fail") {
+    missingDocs.push("Supplier/contract evidence");
+  }
+  if (!hasCoreUnverifiable && producesFoodWaste && checks.find((c) => c.check_name === "Food waste evidence present")?.result === "fail") {
+    missingDocs.push("Food waste documentation");
+  }
   if (producesHazardousWaste && checks.find((c) => c.check_name === "Hazardous waste consignment note present")?.result === "fail") {
     missingDocs.push("Hazardous waste consignment note");
   }
@@ -1096,12 +1101,19 @@ function deriveMissingAndUnverifiable(params: {
   if (wtnState.detected_unverifiable) unverifiableDocs.push("Waste transfer note - uploaded but unreadable");
   if (invoiceState.detected_unverifiable) unverifiableDocs.push("Waste invoice / collection evidence - uploaded but unreadable");
   if (carrierState.detected_unverifiable) unverifiableDocs.push("Carrier licence evidence - uploaded but unreadable");
+  if (hasCoreUnverifiable && checks.find((c) => c.check_name === "Supplier/contract evidence present")?.result === "fail") {
+    unverifiableDocs.push("Supplier/contract evidence - could not be confirmed due to unreadable documents");
+  }
+  if (hasCoreUnverifiable && producesFoodWaste && checks.find((c) => c.check_name === "Food waste evidence present")?.result === "fail") {
+    unverifiableDocs.push("Food waste evidence - could not be confirmed due to unreadable documents");
+  }
   return {
     missingDocs: Array.from(new Set(missingDocs)),
     unverifiableDocs,
     wtnState,
     invoiceState,
-    carrierState
+    carrierState,
+    hasCoreUnverifiable
   };
 }
 
@@ -1133,6 +1145,9 @@ function scoreFromChecks(params: { checks: BaselineCheck[]; docs: ReportDocument
     .filter((d) => d.document_type === "waste_transfer_note" || d.document_type === "invoice")
     .filter((d) => hasText(getCarrierNameFromDoc(d)));
   const irrelevantOnlyPack = docs.length > 0 && docs.every((d) => !getDocumentRelevance(d).used_in_assessment);
+  const hasUnreadableCoreEvidence = ["waste_transfer_note", "invoice"].some((hint) =>
+    docs.some((d) => getDocumentRelevance(d).relevance_status === "RELEVANT_UNREADABLE" && inferWasteDocumentTypeHint(d) === hint)
+  );
   const coreUnverifiableDetected = [
     "Waste Transfer Note present",
     "Waste invoice or collection evidence present",
@@ -1144,10 +1159,18 @@ function scoreFromChecks(params: { checks: BaselineCheck[]; docs: ReportDocument
   if (byName("Carrier licence valid / not expired")?.result === "fail") deductions.push({ reason: "Carrier licence not valid at transfer date", points: 28 });
   if (byName("Carrier licence valid / not expired")?.result === "attention_needed") deductions.push({ reason: "Carrier licence expired now (valid at transfer)", points: 8 });
   if (byName("Carrier licence evidence present")?.result === "fail") deductions.push({ reason: "Missing carrier licence evidence", points: 25 });
-  if (business.produces_food_waste && byName("Food waste evidence present")?.result === "fail") deductions.push({ reason: "Missing food waste evidence", points: 25 });
+  if (business.produces_food_waste && byName("Food waste evidence present")?.result === "fail") {
+    deductions.push({
+      reason: hasUnreadableCoreEvidence ? "Food waste evidence could not be verified" : "Missing food waste evidence",
+      points: hasUnreadableCoreEvidence ? 12 : 25
+    });
+  }
   if (business.produces_hazardous_waste && byName("Hazardous waste consignment note present")?.result === "fail") deductions.push({ reason: "Missing hazardous waste consignment note", points: 30 });
   if (byName("Supplier/contract evidence present")?.result === "fail" && supplierEvidenceFromOps.length === 0) {
-    deductions.push({ reason: "Missing supplier contract evidence", points: 8 });
+    deductions.push({
+      reason: hasUnreadableCoreEvidence ? "Supplier/contract evidence could not be confirmed" : "Missing supplier contract evidence",
+      points: hasUnreadableCoreEvidence ? 5 : 8
+    });
   }
   if (byName("Supplier/contract evidence present")?.result === "attention_needed" && supplierEvidenceFromOps.length === 0) {
     deductions.push({ reason: "Missing supplier contract evidence", points: 8 });
@@ -1829,7 +1852,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     producesFoodWaste: business.produces_food_waste,
     producesHazardousWaste: business.produces_hazardous_waste
   });
-  const { wtnState, invoiceState, carrierState } = evidenceStates;
+  const { wtnState, invoiceState, carrierState, hasCoreUnverifiable } = evidenceStates;
   const entityValidation = validateSingleBusinessPack({
     onboardedBusinessName: business.name,
     documents: docs
@@ -2100,9 +2123,11 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   if (foodWasteMissing) {
     businessRisks.unshift({
       id: "food-waste-missing",
-      title: "Food waste documentation missing",
-      description: "Based on the business profile, food waste evidence was expected but not found in the uploaded documents.",
-      severity: "high",
+      title: hasCoreUnverifiable ? "Food waste evidence could not be verified" : "Food waste documentation missing",
+      description: hasCoreUnverifiable
+        ? "Food waste evidence could not be confirmed because core documents were unreadable."
+        : "Based on the business profile, food waste evidence was expected but not found in the uploaded documents.",
+      severity: hasCoreUnverifiable ? "medium" : "high",
       status: "open",
       rule_id: "food_waste_missing",
       document_id: null

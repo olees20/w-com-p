@@ -84,6 +84,8 @@ test("low quality relevant docs are classified as RELEVANT_UNREADABLE and checks
     score.breakdown.deductions.filter((d) => d.reason.toLowerCase().includes("unreadable")).length,
     0
   );
+  assert.ok(score.breakdown.deductions.some((d) => d.reason === "Food waste evidence could not be verified"));
+  assert.ok(score.breakdown.deductions.some((d) => d.reason === "Supplier/contract evidence could not be confirmed"));
 
   const derived = deriveMissingAndUnverifiableForTest({
     checks,
@@ -93,6 +95,10 @@ test("low quality relevant docs are classified as RELEVANT_UNREADABLE and checks
   assert.ok(!derived.missingDocs.includes("Waste transfer note"));
   assert.ok(!derived.missingDocs.includes("Waste invoice / collection evidence"));
   assert.ok(derived.missingDocs.includes("Carrier licence evidence"));
+  assert.ok(!derived.missingDocs.includes("Food waste documentation"));
+  assert.ok(!derived.missingDocs.includes("Supplier/contract evidence"));
   assert.ok(derived.unverifiableDocs.includes("Waste transfer note - uploaded but unreadable"));
   assert.ok(derived.unverifiableDocs.includes("Waste invoice / collection evidence - uploaded but unreadable"));
+  assert.ok(derived.unverifiableDocs.some((x) => x.includes("Food waste evidence - could not be confirmed")));
+  assert.ok(derived.unverifiableDocs.some((x) => x.includes("Supplier/contract evidence - could not be confirmed")));
 });
