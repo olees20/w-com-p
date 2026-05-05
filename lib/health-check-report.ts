@@ -988,14 +988,30 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
 
   checks.push({
     check_name: "Supplier/contract evidence present",
-    result: strongContractDocs.length || hasSupplierRelationshipEvidence ? "pass" : draftOrUnsignedContractDocs.length ? "attention_needed" : hasAnyUploads ? "fail" : "cannot_verify",
+    result:
+      strongContractDocs.length || hasSupplierRelationshipEvidence
+        ? "pass"
+        : draftOrUnsignedContractDocs.length || hasUnreadableInvoice
+          ? "attention_needed"
+          : hasAnyUploads
+            ? "fail"
+            : "cannot_verify",
     evidence_used: strongContractDocs.length
       ? strongContractDocs.map((d) => d.file_name)
       : draftOrUnsignedContractDocs.length
         ? draftOrUnsignedContractDocs.map((d) => `${d.file_name} (draft/unsigned)`)
-      : supplierRelationshipEvidence.map((d) => `${d.file_name} (${getCarrierNameFromDoc(d) ?? "supplier"})`),
+        : hasUnreadableInvoice
+          ? unreadableDocs
+              .filter((d) => inferWasteDocumentTypeHint(d) === "invoice")
+              .map((d) => `${d.file_name} (could not confirm supplier/contract details due to unreadable invoice)`)
+          : supplierRelationshipEvidence.map((d) => `${d.file_name} (${getCarrierNameFromDoc(d) ?? "supplier"})`),
     affected_document: strongContractDocs[0]?.file_name ?? draftOrUnsignedContractDocs[0]?.file_name ?? null,
-    recommended_action: strongContractDocs.length || hasSupplierRelationshipEvidence ? "No immediate action." : "Upload supplier contract evidence.",
+    recommended_action:
+      strongContractDocs.length || hasSupplierRelationshipEvidence
+        ? "No immediate action."
+        : hasUnreadableInvoice
+          ? "Evidence may be present but could not be reliably extracted due to low document quality."
+          : "Upload supplier contract evidence.",
     source_reference: resolveSourceReference(
       "Supplier/contract evidence present",
       findReference(rules, sources, ["waste duty of care gov.uk", "dispose business commercial waste"])
@@ -1006,10 +1022,21 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
     const foodEvidence = processed.filter((d) => lower(`${d.waste_type} ${d.ai_summary}`).includes("food"));
     checks.push({
       check_name: "Food waste evidence present",
-      result: foodEvidence.length ? "pass" : hasAnyUploads ? "fail" : "cannot_verify",
-      evidence_used: foodEvidence.map((d) => d.file_name),
+      result: foodEvidence.length ? "pass" : hasUnreadableInvoice ? "attention_needed" : hasAnyUploads ? "fail" : "cannot_verify",
+      evidence_used: foodEvidence.length
+        ? foodEvidence.map((d) => d.file_name)
+        : hasUnreadableInvoice
+          ? unreadableDocs
+              .filter((d) => inferWasteDocumentTypeHint(d) === "invoice")
+              .map((d) => `${d.file_name} (could not confirm food waste due to unreadable invoice)`)
+          : [],
       affected_document: foodEvidence[0]?.file_name ?? null,
-      recommended_action: foodEvidence.length ? "No immediate action." : "Upload food waste collection evidence.",
+      recommended_action:
+        foodEvidence.length
+          ? "No immediate action."
+          : hasUnreadableInvoice
+            ? "Evidence may be present but could not be reliably extracted due to low document quality."
+            : "Upload food waste collection evidence.",
       source_reference: resolveSourceReference(
         "Food waste evidence present",
         findReference(rules, sources, ["food waste workplace recycling england gov.uk", "simpler recycling workplace recycling"])
@@ -1124,10 +1151,12 @@ function deriveMissingAndUnverifiable(params: {
   const missingDocs: string[] = [];
   if (wtnState.missing) missingDocs.push("Waste transfer note");
   if (carrierState.missing) missingDocs.push("Carrier licence evidence");
-  if (!hasCoreUnverifiable && checks.find((c) => c.check_name === "Supplier/contract evidence present")?.result === "fail") {
+  const supplierCheckResult = checks.find((c) => c.check_name === "Supplier/contract evidence present")?.result;
+  const foodCheckResult = checks.find((c) => c.check_name === "Food waste evidence present")?.result;
+  if (!hasCoreUnverifiable && supplierCheckResult === "fail") {
     missingDocs.push("Supplier/contract evidence");
   }
-  if (!hasCoreUnverifiable && producesFoodWaste && checks.find((c) => c.check_name === "Food waste evidence present")?.result === "fail") {
+  if (!hasCoreUnverifiable && producesFoodWaste && foodCheckResult === "fail") {
     missingDocs.push("Food waste documentation");
   }
   if (producesHazardousWaste && checks.find((c) => c.check_name === "Hazardous waste consignment note present")?.result === "fail") {
@@ -1137,19 +1166,10 @@ function deriveMissingAndUnverifiable(params: {
   if (wtnState.detected_unverifiable) unverifiableDocs.push("Waste transfer note - uploaded but unreadable");
   if (invoiceState.detected_unverifiable) unverifiableDocs.push("Waste invoice / collection evidence - uploaded but unreadable");
   if (carrierState.detected_unverifiable) unverifiableDocs.push("Carrier licence evidence - uploaded but unreadable");
-  const hasContractLikeDoc = checks.some(
-    (c) =>
-      c.check_name === "Supplier/contract evidence present" &&
-      c.evidence_used.some((e) => /contract/i.test(e))
-  );
-  if (
-    hasCoreUnverifiable &&
-    hasContractLikeDoc &&
-    checks.find((c) => c.check_name === "Supplier/contract evidence present")?.result === "fail"
-  ) {
+  if (hasCoreUnverifiable && supplierCheckResult && supplierCheckResult !== "pass") {
     unverifiableDocs.push("Supplier/contract evidence - could not be confirmed due to unreadable documents");
   }
-  if (hasCoreUnverifiable && producesFoodWaste && checks.find((c) => c.check_name === "Food waste evidence present")?.result === "fail") {
+  if (hasCoreUnverifiable && producesFoodWaste && foodCheckResult && foodCheckResult !== "pass") {
     unverifiableDocs.push("Food waste evidence - could not be confirmed due to unreadable documents");
   }
   return {
@@ -1204,20 +1224,30 @@ function scoreFromChecks(params: { checks: BaselineCheck[]; docs: ReportDocument
   if (byName("Carrier licence valid / not expired")?.result === "fail") deductions.push({ reason: "No valid carrier licence for transfer", points: 28 });
   if (byName("Carrier licence valid / not expired")?.result === "attention_needed") deductions.push({ reason: "Carrier licence expired now (valid at transfer)", points: 8 });
   if (byName("Carrier licence evidence present")?.result === "fail") deductions.push({ reason: "Missing carrier licence evidence", points: 25 });
-  if (business.produces_food_waste && byName("Food waste evidence present")?.result === "fail") {
+  if (
+    business.produces_food_waste &&
+    (byName("Food waste evidence present")?.result === "fail" || byName("Food waste evidence present")?.result === "attention_needed")
+  ) {
     deductions.push({
       reason: hasUnreadableCoreEvidence ? "Food waste evidence could not be verified" : "Missing food waste evidence",
       points: hasUnreadableCoreEvidence ? 12 : 25
     });
   }
   if (business.produces_hazardous_waste && byName("Hazardous waste consignment note present")?.result === "fail") deductions.push({ reason: "Missing hazardous waste consignment note", points: 30 });
-  if (byName("Supplier/contract evidence present")?.result === "fail" && supplierEvidenceFromOps.length === 0) {
+  if (
+    (byName("Supplier/contract evidence present")?.result === "fail" || byName("Supplier/contract evidence present")?.result === "attention_needed") &&
+    supplierEvidenceFromOps.length === 0
+  ) {
     deductions.push({
       reason: hasUnreadableCoreEvidence ? "Supplier/contract evidence could not be confirmed" : "Missing supplier contract evidence",
       points: hasUnreadableCoreEvidence ? 5 : 8
     });
   }
-  if (byName("Supplier/contract evidence present")?.result === "attention_needed" && supplierEvidenceFromOps.length === 0) {
+  if (
+    byName("Supplier/contract evidence present")?.result === "attention_needed" &&
+    supplierEvidenceFromOps.length === 0 &&
+    !hasUnreadableCoreEvidence
+  ) {
     deductions.push({ reason: "Missing supplier contract evidence", points: 8 });
   }
   if (coreUnverifiableDetected) deductions.push({ reason: "Uploaded core evidence could not be verified due to document quality", points: 22 });

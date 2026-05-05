@@ -62,8 +62,16 @@ test("low quality relevant docs are classified as RELEVANT_UNREADABLE and checks
 
   const wtn = checks.find((c) => c.check_name === "Waste Transfer Note present");
   const inv = checks.find((c) => c.check_name === "Waste invoice or collection evidence present");
+  const food = checks.find((c) => c.check_name === "Food waste evidence present");
+  const supplier = checks.find((c) => c.check_name === "Supplier/contract evidence present");
+  const carrier = checks.find((c) => c.check_name === "Carrier licence evidence present");
   assert.equal(wtn?.result, "attention_needed");
   assert.equal(inv?.result, "attention_needed");
+  assert.equal(food?.result, "attention_needed");
+  assert.equal(supplier?.result, "attention_needed");
+  assert.equal(carrier?.result, "fail");
+  assert.ok((food?.evidence_used[0] ?? "").includes("could not confirm food waste"));
+  assert.ok((supplier?.evidence_used[0] ?? "").includes("could not confirm supplier/contract"));
   assert.ok((wtn?.recommended_action ?? "").includes("could not be reliably extracted"));
 
   const score = scoreFromChecksForTest({
