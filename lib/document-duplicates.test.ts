@@ -105,6 +105,31 @@ test("extracts invoice number from summary text and matches duplicates (EL-90199
   assert.equal(detectDuplicateDocuments([a, b]).length, 1);
 });
 
+test("copy fallback detects duplicates when only one invoice has invoice number", () => {
+  const a = mk({
+    id: "a",
+    file_name: "invoice_april.pdf",
+    extracted_supplier: "EcoLoop Waste Services Ltd",
+    extracted_date: "2026-04-26",
+    ai_summary:
+      "Invoice issued by EcoLoop Waste Services Ltd on 26 April 2026 to client Copper Kettle Bistro Ltd for services including General Waste Collection, Dry Mixed Recycling, and Food Waste Caddy.",
+    ai_extracted_json: {}
+  });
+  const b = mk({
+    id: "b",
+    file_name: "invoice_april_copy.pdf",
+    extracted_supplier: "EcoLoop Waste Services Ltd",
+    extracted_date: "2026-04-26",
+    ai_summary:
+      "Invoice EL-90199 issued on 26 April 2026 by EcoLoop Waste Services Ltd to client Copper Kettle Bistro Ltd for services including General Waste Collection, Dry Mixed Recycling, and Food Waste Caddy.",
+    ai_extracted_json: {}
+  });
+  const pairs = detectDuplicateDocuments([a, b]);
+  assert.equal(pairs.length, 1);
+  assert.equal(pairs[0].canonicalFile, "invoice_april.pdf");
+  assert.equal(pairs[0].duplicateFile, "invoice_april_copy.pdf");
+});
+
 test("copy filename with different invoice number/date is not duplicate", () => {
   const docs = [
     mk({ id: "a", file_name: "invoice_april.pdf", extracted_supplier: "GreenCycle", extracted_date: "2026-04-01", ai_extracted_json: { invoice_number: "INV-1", client_name: "Bean", service_lines: "General waste" } }),

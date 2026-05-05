@@ -36,6 +36,20 @@ export type DuplicateComparisonDebug = {
   reason: string;
 };
 
+type InvoiceDuplicateDecision = {
+  duplicate: boolean;
+  reason: string;
+  score: number;
+  invoiceNumberMatch: boolean;
+  supplierMatch: boolean;
+  customerMatch: boolean;
+  dateMatch: boolean;
+  servicesMatch: boolean;
+  serviceOverlapCount: number;
+  summarySimilarity: number;
+  filenameCopySignal: boolean;
+};
+
 function norm(v: string | null | undefined) {
   return (v ?? "")
     .toLowerCase()
@@ -116,6 +130,54 @@ function invoiceSignature(doc: DuplicateDoc) {
 
 function normalizeInvoiceNumber(v: string | null | undefined) {
   return (v ?? "").toUpperCase().replace(/[\s-]+/g, "").trim();
+}
+
+function normalizeText(v: string | null | undefined) {
+  return (v ?? "")
+    .toLowerCase()
+    .replace(/[^\w\s]/g, " ")
+    .replace(/\blimited\b/g, "ltd")
+    .replace(/\bltd\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizedSummary(doc: DuplicateDoc) {
+  const p = doc.ai_extracted_json ?? {};
+  const raw =
+    getJsonText(p, ["summary", "raw_text_excerpt", "raw_text", "extracted_text", "text"]) ||
+    doc.ai_summary ||
+    "";
+  return normalizeText(raw);
+}
+
+function normalizeServiceAlias(text: string) {
+  return text
+    .replace(/\bfood waste caddy\b/g, "food waste")
+    .replace(/\bdry mixed recycling\b/g, "recycling")
+    .replace(/\bgeneral waste collection\b/g, "general waste")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function serviceTermSet(text: string) {
+  const t = normalizeServiceAlias(normalizeText(text));
+  const terms = [
+    "general waste",
+    "recycling",
+    "food waste"
+  ];
+  return new Set(terms.filter((term) => t.includes(term)));
+}
+
+function jaccardSimilarity(a: string, b: string) {
+  const sa = new Set(a.split(" ").filter((t) => t.length > 2));
+  const sb = new Set(b.split(" ").filter((t) => t.length > 2));
+  if (sa.size === 0 || sb.size === 0) return 0;
+  let inter = 0;
+  for (const t of sa) if (sb.has(t)) inter += 1;
+  const union = new Set([...sa, ...sb]).size;
+  return union === 0 ? 0 : inter / union;
 }
 
 function extractInvoiceNumberFromText(text: string) {
@@ -213,6 +275,12 @@ function sameInvoice(a: DuplicateDoc, b: DuplicateDoc) {
     !!sb.services &&
     sa.services.split(" ").filter((w) => w.length > 3).some((w) => sb.services.includes(w));
   const amountMatch = !!sa.amount && !!sb.amount && sa.amount === sb.amount;
+  const summaryA = normalizedSummary(a);
+  const summaryB = normalizedSummary(b);
+  const summarySimilarity = jaccardSimilarity(summaryA, summaryB);
+  const serviceA = serviceTermSet(`${sa.services} ${summaryA}`);
+  const serviceB = serviceTermSet(`${sb.services} ${summaryB}`);
+  const serviceOverlapCount = Array.from(serviceA).filter((s) => serviceB.has(s)).length;
 
   const duplicate =
     // A) strong invoice number + supplier + customer
@@ -221,11 +289,66 @@ function sameInvoice(a: DuplicateDoc, b: DuplicateDoc) {
     (copySignal && supplierMatch && customerMatch && dateMatch) ||
     // C) content similarity fallback
     (supplierMatch && customerMatch && dateMatch && (overlapServiceWords || amountMatch)) ||
+    // D) copy+core+service overlap fallback when one side misses invoice number
+    (copySignal && supplierMatch && customerMatch && dateMatch && serviceOverlapCount >= 2) ||
+    // E) high summary similarity fallback
+    (supplierMatch && customerMatch && dateMatch && summarySimilarity >= 0.75) ||
     // tolerate missing customer on one side if copy/date/supplier/services strongly align
     (copySignal && supplierMatch && dateMatch && servicesMatch && (!sa.customer || !sb.customer)) ||
     score >= 6;
 
   return duplicate;
+}
+
+function getInvoiceDecision(a: DuplicateDoc, b: DuplicateDoc): InvoiceDuplicateDecision {
+  const sa = invoiceSignature(a);
+  const sb = invoiceSignature(b);
+  const invoiceNumberMatch = Boolean(sa.number && sb.number && sa.number === sb.number);
+  const supplierMatch = Boolean(sa.supplier && sb.supplier && sa.supplier === sb.supplier);
+  const customerMatch = Boolean(sa.customer && sb.customer && sa.customer === sb.customer);
+  const dateMatch = Boolean(sa.date && sb.date && sa.date === sb.date);
+  const servicesMatch = Boolean(sa.services && sb.services && sa.services === sb.services);
+  const filenameCopySignal = hasCopyFilenameHint(b.file_name) || hasCopyFilenameHint(a.file_name);
+  const summaryA = normalizedSummary(a);
+  const summaryB = normalizedSummary(b);
+  const summarySimilarity = jaccardSimilarity(summaryA, summaryB);
+  const serviceA = serviceTermSet(`${sa.services} ${summaryA}`);
+  const serviceB = serviceTermSet(`${sb.services} ${summaryB}`);
+  const serviceOverlapCount = Array.from(serviceA).filter((s) => serviceB.has(s)).length;
+  let score = 0;
+  if (invoiceNumberMatch) score += 4;
+  if (supplierMatch) score += 1;
+  if (customerMatch) score += 1;
+  if (dateMatch) score += 1;
+  if (servicesMatch) score += 1;
+  if (filenameCopySignal && supplierMatch && customerMatch && dateMatch) score += 2;
+  if (serviceOverlapCount >= 2) score += 2;
+  if (summarySimilarity >= 0.75) score += 2;
+  const duplicate = sameInvoice(a, b);
+  const reason = duplicate
+    ? invoiceNumberMatch && supplierMatch && customerMatch
+      ? "strong_invoice_number_match"
+      : filenameCopySignal && supplierMatch && customerMatch && dateMatch && serviceOverlapCount >= 2
+        ? "copy_core_service_overlap"
+        : supplierMatch && customerMatch && dateMatch && summarySimilarity >= 0.75
+          ? "summary_similarity_fallback"
+          : filenameCopySignal && supplierMatch && customerMatch && dateMatch
+            ? "copy_filename_fallback"
+            : "content_similarity_fallback"
+    : "no_duplicate_rule_matched";
+  return {
+    duplicate,
+    reason,
+    score,
+    invoiceNumberMatch,
+    supplierMatch,
+    customerMatch,
+    dateMatch,
+    servicesMatch,
+    serviceOverlapCount,
+    summarySimilarity,
+    filenameCopySignal
+  };
 }
 
 function sameWtn(a: DuplicateDoc, b: DuplicateDoc) {
@@ -281,41 +404,21 @@ function compareInvoiceDebug(a: DuplicateDoc, b: DuplicateDoc): DuplicateCompari
   const copySignal = hasCopyFilenameHint(a.file_name) || hasCopyFilenameHint(b.file_name);
   const sa = invoiceSignature(a);
   const sb = invoiceSignature(b);
-  const invoiceNumberMatch = Boolean(sa.number && sb.number && sa.number === sb.number);
-  const supplierMatch = Boolean(sa.supplier && sb.supplier && sa.supplier === sb.supplier);
-  const customerMatch = Boolean(sa.customer && sb.customer && sa.customer === sb.customer);
-  const dateMatch = Boolean(sa.date && sb.date && sa.date === sb.date);
-  const servicesMatch = Boolean(sa.services && sb.services && sa.services === sb.services);
-  let score = 0;
-  if (exactHashMatch) score += 10;
-  if (invoiceNumberMatch) score += 4;
-  if (supplierMatch) score += 1;
-  if (customerMatch) score += 1;
-  if (dateMatch) score += 1;
-  if (servicesMatch) score += 1;
-  if (copySignal && supplierMatch && customerMatch && dateMatch) score += 2;
-  const duplicate = exactHashMatch || sameInvoice(a, b);
-  const reason = duplicate
-    ? invoiceNumberMatch && supplierMatch && customerMatch
-      ? "strong_invoice_number_match"
-      : copySignal && supplierMatch && customerMatch && dateMatch
-        ? "copy_filename_fallback"
-        : "content_similarity_fallback"
-    : "no_duplicate_rule_matched";
+  const decision = getInvoiceDecision(a, b);
   return {
     a_file: a.file_name,
     b_file: b.file_name,
     document_type: a.document_type,
     exact_hash_match: exactHashMatch,
     filename_copy_signal: copySignal,
-    invoice_number_match: invoiceNumberMatch,
-    supplier_match: supplierMatch,
-    customer_match: customerMatch,
-    date_match: dateMatch,
-    service_lines_match: servicesMatch,
-    final_duplicate_score: score,
-    duplicate,
-    reason
+    invoice_number_match: decision.invoiceNumberMatch,
+    supplier_match: decision.supplierMatch,
+    customer_match: decision.customerMatch,
+    date_match: decision.dateMatch,
+    service_lines_match: decision.servicesMatch,
+    final_duplicate_score: (exactHashMatch ? 10 : 0) + decision.score,
+    duplicate: exactHashMatch || decision.duplicate,
+    reason: decision.reason
   };
 }
 
@@ -355,15 +458,33 @@ export function detectDuplicateDocuments<T extends DuplicateDoc>(docs: T[]): Dup
           b.file_name.toLowerCase().includes("invoice_april")
         ) {
           console.log("[duplicates][pair-debug]", debug);
+          console.log("DUPLICATE_COMPARE", {
+            a: a.file_name,
+            b: b.file_name,
+            invoiceA: invoiceSignature(a).number || null,
+            invoiceB: invoiceSignature(b).number || null,
+            filenameCopySignal: debug.filename_copy_signal,
+            supplierMatch: debug.supplier_match,
+            customerMatch: debug.customer_match,
+            dateMatch: debug.date_match,
+            serviceOverlap: getInvoiceDecision(a, b).serviceOverlapCount,
+            summarySimilarity: getInvoiceDecision(a, b).summarySimilarity,
+            duplicate: debug.duplicate,
+            reason: debug.reason
+          });
         }
       }
       if (!isDuplicatePair(a, b)) continue;
+      const aCopy = hasCopyFilenameHint(a.file_name);
+      const bCopy = hasCopyFilenameHint(b.file_name);
+      const canonical = aCopy && !bCopy ? b : a;
+      const duplicate = aCopy && !bCopy ? a : b;
       pairs.push({
-        canonicalId: a.id,
-        duplicateId: b.id,
-        canonicalFile: a.file_name,
-        duplicateFile: b.file_name,
-        reason: `${b.file_name} appears to duplicate ${a.file_name}`
+        canonicalId: canonical.id,
+        duplicateId: duplicate.id,
+        canonicalFile: canonical.file_name,
+        duplicateFile: duplicate.file_name,
+        reason: `${duplicate.file_name} appears to duplicate ${canonical.file_name}`
       });
     }
   }
