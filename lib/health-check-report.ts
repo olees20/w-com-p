@@ -1485,7 +1485,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   const finalActionsWithRelevanceFallback =
     docs.length > 0 && usedDocs.length === 0
       ? [
-          "Upload waste compliance documents such as WTNs, waste invoices, carrier licence evidence, and food waste collection records.",
+          "Upload waste compliance documents such as WTNs, invoices, carrier licence, or food waste records.",
           ...finalActions
         ]
       : finalActions;

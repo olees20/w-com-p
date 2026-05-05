@@ -59,7 +59,7 @@ test("all-irrelevant pack marks docs as not used and fails baseline evidence che
       produces_hazardous_waste: false
     }
   });
-  assert.ok(score.score <= 20);
+  assert.equal(score.score, 15);
 
   const notUsed = classifyNotUsedDocumentsForTest(docs, { produces_hazardous_waste: false });
   assert.equal(notUsed.length, 2);

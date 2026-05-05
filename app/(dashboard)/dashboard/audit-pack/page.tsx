@@ -238,7 +238,7 @@ export default async function AuditPackPage() {
               {report.documents.length > 0 && report.documents_not_used.length === report.documents.length ? (
                 <p>All uploaded documents were reviewed; however, none contributed to waste compliance evidence.</p>
               ) : report.documents_not_used.length > 0 ? (
-                <p>Some uploaded documents were excluded because they were not waste compliance evidence.</p>
+                <p>Some uploaded documents were excluded because they were not relevant to waste compliance.</p>
               ) : null}
             </>
           ) : (
