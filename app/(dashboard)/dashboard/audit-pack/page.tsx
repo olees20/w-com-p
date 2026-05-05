@@ -308,6 +308,26 @@ export default async function AuditPackPage() {
         </div>
       </section>
 
+      {process.env.NODE_ENV !== "production" && report.debug_document_relevance?.length ? (
+        <section className="rounded-xl border border-blue-200 bg-blue-50 p-4">
+          <h2 className="text-sm font-semibold text-blue-900">Dev Debug: Relevance Classifier</h2>
+          <div className="mt-2 space-y-2 text-xs text-blue-900">
+            {report.debug_document_relevance.map((row) => (
+              <article key={row.file_name} className="rounded border border-blue-200 bg-white p-2">
+                <p><span className="font-semibold">filename:</span> {row.file_name}</p>
+                <p><span className="font-semibold">document_type:</span> {row.document_type ?? "null"}</p>
+                <p><span className="font-semibold">processing_status:</span> {row.processing_status ?? "null"}</p>
+                <p><span className="font-semibold">extracted_data.document_type:</span> {row.extracted_data_document_type ?? "null"}</p>
+                <p><span className="font-semibold">raw_text_excerpt:</span> {row.raw_text_excerpt || "N/A"}</p>
+                <p><span className="font-semibold">relevance_status:</span> {row.relevance_status}</p>
+                <p><span className="font-semibold">relevance_reason:</span> {row.relevance_reason}</p>
+                <p><span className="font-semibold">used_in_assessment:</span> {String(row.used_in_assessment)}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       <section className="rounded-xl border border-amber-200 bg-amber-50 p-4 print:bg-white print:border-slate-300">
         <p className="text-sm text-amber-900 print:text-slate-700">
           This report is based only on the documents provided. It is compliance support, not legal advice, and does not guarantee regulatory compliance.

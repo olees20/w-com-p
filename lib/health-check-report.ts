@@ -110,6 +110,16 @@ export type HealthCheckReport = {
   totalDocs: number;
   documentsNotUsedCount: number;
   usedDocumentsCount: number;
+  debug_document_relevance?: Array<{
+    file_name: string;
+    document_type: string | null;
+    processing_status: ReportDocument["processing_status"];
+    extracted_data_document_type: string | null;
+    raw_text_excerpt: string;
+    relevance_status: DocumentRelevanceStatus;
+    relevance_reason: string;
+    used_in_assessment: boolean;
+  }>;
 };
 
 type NotUsedClassification = {
@@ -1406,17 +1416,23 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   if (!business) throw new Error("Business not found.");
 
   const docs = (documents ?? []) as ReportDocument[];
+  const debugDocumentRelevance = docs.map((doc) => {
+    const relevance = getDocumentRelevance(doc);
+    const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
+    return {
+      file_name: doc.file_name,
+      document_type: doc.document_type ?? null,
+      processing_status: doc.processing_status,
+      extracted_data_document_type: typeof payload.document_type === "string" ? payload.document_type : null,
+      raw_text_excerpt: getDocumentPreview(doc).slice(0, 300),
+      relevance_status: relevance.relevance_status,
+      relevance_reason: relevance.relevance_reason,
+      used_in_assessment: relevance.used_in_assessment
+    };
+  });
   if (process.env.NODE_ENV !== "production") {
-    for (const doc of docs) {
-      const relevance = getDocumentRelevance(doc);
-      console.log("[health-check][relevance]", {
-        file_name: doc.file_name,
-        document_type: doc.document_type ?? "unknown",
-        extracted_text_preview: getDocumentPreview(doc),
-        relevance_status: relevance.relevance_status,
-        relevance_reason: relevance.relevance_reason,
-        used_in_assessment: relevance.used_in_assessment
-      });
+    for (const row of debugDocumentRelevance) {
+      console.log("[health-check][relevance]", row);
     }
   }
   const openAlerts = (alerts ?? []) as ReportAlert[];
@@ -1775,6 +1791,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     irrelevantUnknownDocsCount: usageSummary.irrelevantUnknownDocsCount,
     totalDocs: usageSummary.totalDocs,
     documentsNotUsedCount: usageSummary.documentsNotUsedCount,
-    usedDocumentsCount: usageSummary.usedDocumentsCount
+    usedDocumentsCount: usageSummary.usedDocumentsCount,
+    debug_document_relevance: process.env.NODE_ENV !== "production" ? debugDocumentRelevance : undefined
   };
 }
