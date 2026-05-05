@@ -1331,6 +1331,9 @@ function verdict(
   }
 
   if (scoreStatus === "attention_needed") {
+    if (hasHighSeverityRisk) {
+      return "Core evidence was found, but the carrier licence does not appear to have been valid at the time of transfer. This must be corrected before relying on this pack.";
+    }
     return "Most core evidence was found, but some issues should be reviewed before relying on this pack.";
   }
 
@@ -1921,9 +1924,19 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   for (const action of normalizedCrossActions) {
     if (!recommendedActions.includes(action)) recommendedActions.push(action);
   }
+  const hasUnifiedLicenceTransferFailure = cross.consistency_findings.some((f) => f.key === "licence_invalid_at_transfer");
+  if (hasUnifiedLicenceTransferFailure) {
+    const unified = "Upload licence evidence that matches each WTN licence number and was valid on each transfer date.";
+    for (let i = recommendedActions.length - 1; i >= 0; i--) {
+      if (/licen[cs]e/i.test(recommendedActions[i])) {
+        recommendedActions.splice(i, 1);
+      }
+    }
+    recommendedActions.unshift(unified);
+  }
   const hasInvalidAtTransferRisk =
     checks.find((c) => c.check_name === "Carrier licence valid / not expired")?.result === "fail" ||
-    cross.consistency_findings.some((f) => f.key === "carrier_licence_timing_invalid_at_transfer");
+    cross.consistency_findings.some((f) => f.key === "carrier_licence_timing_invalid_at_transfer" || f.key === "licence_invalid_at_transfer");
   if (hasInvalidAtTransferRisk) {
     const removePatterns = [
       /provide current carrier licence evidence with a valid expiry date/i,
@@ -2026,7 +2039,8 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
       ruleKey === "licence_valid_at_transfer_expired_now" ||
       ruleKey === "carrier_licence_timing_invalid_at_transfer" ||
       ruleKey === "carrier_licence_timing_expired_now" ||
-      ruleKey === "carrier_licence_valid_at_transfer_expired_now";
+      ruleKey === "carrier_licence_valid_at_transfer_expired_now" ||
+      ruleKey === "licence_mismatch";
     if (removeLegacyCarrierTiming) {
       return false;
     }
@@ -2061,7 +2075,8 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
       document_id: null
     });
   }
-  if (carrierCheck?.result === "fail") {
+  const hasUnifiedLicenceTransferFailureRisk = cross.consistency_findings.some((f) => f.key === "licence_invalid_at_transfer");
+  if (carrierCheck?.result === "fail" && !hasUnifiedLicenceTransferFailureRisk) {
     businessRisks.unshift({
       id: "carrier-timing-risk-fail",
       title: "Carrier licence was not valid at the time of waste transfer",
@@ -2167,7 +2182,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   }
 
   const informationalFindings = cross.consistency_findings.filter((f) =>
-    ["duplicate_documents", "irrelevant_documents", "historic_expired_licence_uploaded", maintenanceCarrierKey].includes(f.key)
+    ["duplicate_documents", "irrelevant_documents", maintenanceCarrierKey].includes(f.key)
   );
   const assessment = overallAssessment({
     score: score.score,

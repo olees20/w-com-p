@@ -187,36 +187,9 @@ export function runCrossDocumentReasoning(params: {
   );
 
   const mismatchedLicences = wtnLicenceDocs.filter((d) => !licenceEvidence.has((getCarrierLicenceNumber(d) ?? "").trim().toLowerCase()));
-  if (mismatchedLicences.length) {
-    findings.push({
-      key: "licence_mismatch",
-      title: "Carrier licence evidence does not match WTN licence number",
-      severity: "medium",
-      status: "attention_needed",
-      message: "A licence number on one or more WTNs could not be matched to uploaded carrier licence evidence.",
-      evidence: mismatchedLicences.map((d) => `${d.file_name} -> ${(getCarrierLicenceNumber(d) ?? "Unknown").trim()}`),
-      recommended_action: "Upload carrier licence evidence matching each WTN licence number.",
-      points: 15,
-      affects_confidence: true
-    });
-  }
+  // licence mismatch is merged into consolidated transfer-validity finding below.
 
-  if (carrierLicenceDocs.length > 0 && hasValidLicenceNow && hasExpiredLicenceNow) {
-    findings.push({
-      key: "historic_expired_licence_uploaded",
-      title: "Historic expired licence evidence also uploaded",
-      severity: "medium",
-      status: "info",
-      message:
-        "A valid licence appears to be present, but older expired evidence was also uploaded. Review which document should be relied on.",
-      evidence: carrierLicenceDocs
-        .filter((d) => d.expiry_date)
-        .map((d) => `${d.file_name} -> ${d.expiry_date}`),
-      recommended_action: "Review licence files and keep the current valid evidence clearly identifiable.",
-      points: 0,
-      affects_confidence: false
-    });
-  }
+  // historic expired evidence is represented as context on consolidated licence finding.
 
   // Consolidated timing-based licence risk is created below to avoid duplicate findings.
 
@@ -263,16 +236,34 @@ export function runCrossDocumentReasoning(params: {
   const hasExpiredNowOnly = !hasInvalidAtTransfer && hasTransferLinkedWtn && validAtTransferButExpiredNow.length > 0;
   const hasOnlyExpiredNoWtnContext = !hasTransferLinkedWtn && !hasValidLicenceNow && hasExpiredLicenceNow && carrierLicenceDocs.length > 0;
 
-  if (hasInvalidAtTransfer) {
+  if (hasInvalidAtTransfer || mismatchedLicences.length) {
+    const invalidEvidence = expiredBeforeWtn.map((d) => `${d.file_name} -> transfer ${d.extracted_date}`);
+    const mismatchEvidence = mismatchedLicences.map((d) => `${d.file_name} -> licence ${(getCarrierLicenceNumber(d) ?? "Unknown").trim()} not matched`);
+    const validNonMatching = carrierLicences
+      .filter((c) => {
+        const exp = parseDate(c.expiry_date);
+        return !!exp && exp >= now;
+      })
+      .filter((c) => {
+        const number = (getCarrierLicenceNumber(c) ?? "").trim().toLowerCase();
+        if (!number) return false;
+        return mismatchedLicences.some((wtn) => {
+          const wtnNumber = (getCarrierLicenceNumber(wtn) ?? "").trim().toLowerCase();
+          return wtnNumber !== number;
+        });
+      })
+      .map((c) => `${c.file_name} -> valid until ${c.expiry_date ?? "unknown"}`);
+
     findings.push({
-      key: "carrier_licence_timing_invalid_at_transfer",
-      title: "Carrier licence was not valid at the time of waste transfer",
+      key: "licence_invalid_at_transfer",
+      title: "Carrier licence mismatch and invalid at transfer",
       severity: "high",
       status: "fail",
-      message: "Carrier licence was not valid at the time of waste transfer.",
-      evidence: expiredBeforeWtn.map((d) => `${d.file_name} -> ${d.extracted_date}`),
-      recommended_action: "Upload licence evidence that was valid on each transfer date.",
-      points: 12,
+      message:
+        "Carrier licence evidence indicates the referenced licence was not valid at the transfer date, or the valid licence evidence does not match the WTN licence number.",
+      evidence: [...invalidEvidence, ...mismatchEvidence, ...validNonMatching],
+      recommended_action: "Upload licence evidence that matches each WTN licence number and was valid on each transfer date.",
+      points: 0,
       affects_confidence: true
     });
   } else if (hasExpiredNowOnly || hasOnlyExpiredNoWtnContext) {

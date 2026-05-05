@@ -62,10 +62,10 @@ test("flags cross-document inconsistencies", () => {
   });
 
   assert.ok(result.consistency_findings.some((f) => f.key === "conflicting_waste_carriers"));
-  assert.ok(result.consistency_findings.some((f) => f.key === "licence_mismatch"));
+  assert.ok(result.consistency_findings.some((f) => f.key === "licence_invalid_at_transfer"));
 });
 
-test("expired + valid licence for same carrier is not hard fail", () => {
+test("expired + valid licence for same carrier with matching WTN is not hard fail", () => {
   const result = runCrossDocumentReasoning({
     business: { produces_food_waste: false, produces_hazardous_waste: false },
     openAlerts: [],
@@ -102,7 +102,7 @@ test("expired + valid licence for same carrier is not hard fail", () => {
     ]
   });
 
-  assert.ok(!result.consistency_findings.some((f) => f.key === "licence_mismatch"));
+  assert.ok(!result.consistency_findings.some((f) => f.key === "licence_invalid_at_transfer"));
 });
 
 test("flags internal active/expired inconsistency", () => {
@@ -171,7 +171,7 @@ test("expired licence only creates high expired risk", () => {
   assert.equal(finding?.severity, "high");
 });
 
-test("valid + expired shows historic expired evidence, not expired-only", () => {
+test("valid + expired without WTN context does not create invalid-at-transfer finding", () => {
   const result = runCrossDocumentReasoning({
     business: { produces_food_waste: false, produces_hazardous_waste: false },
     openAlerts: [],
@@ -200,8 +200,8 @@ test("valid + expired shows historic expired evidence, not expired-only", () => 
   });
 
   const historic = result.consistency_findings.find((f) => f.key === "historic_expired_licence_uploaded");
-  assert.ok(historic);
-  assert.equal(historic?.status, "info");
+  assert.equal(historic, undefined);
+  assert.ok(!result.consistency_findings.some((f) => f.key === "licence_invalid_at_transfer"));
   assert.ok(!result.consistency_findings.some((f) => f.key === "carrier_licence_expired_only"));
 });
 
