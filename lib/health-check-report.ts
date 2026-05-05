@@ -79,6 +79,7 @@ export type HealthCheckReport = {
   plain_english_verdict: string;
   top_risks: ReportAlert[];
   missing_documents: string[];
+  unverifiable_documents: string[];
   compliance_checks: BaselineCheck[];
   documents: ReportDocument[];
   references: RuleRef[];
@@ -87,6 +88,7 @@ export type HealthCheckReport = {
   consistency_findings: ConsistencyFinding[];
   confidence_contributors: string[];
   documents_not_used: Array<{ file_name: string; reason: string }>;
+  documents_requiring_review: Array<{ file_name: string; reason: string }>;
   additional_supporting_documents: Array<{ file_name: string; reason: string }>;
   consistency_summary: {
     carriers_detected: string[];
@@ -141,6 +143,12 @@ type NotUsedClassification = {
   reason: string;
   recommended_action: string | null;
   category: "unrelated" | "unreadable" | "ambiguous" | "potentially_relevant_unreadable";
+};
+
+type EvidenceState = {
+  verified_present: boolean;
+  detected_unverifiable: boolean;
+  missing: boolean;
 };
 
 type SupportingDocument = {
@@ -1054,6 +1062,57 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
   return checks;
 }
 
+function getEvidenceState(checks: BaselineCheck[], checkName: string): EvidenceState {
+  const check = checks.find((c) => c.check_name === checkName);
+  if (!check) return { verified_present: false, detected_unverifiable: false, missing: true };
+  if (check.result === "pass") return { verified_present: true, detected_unverifiable: false, missing: false };
+  if (check.result === "attention_needed") return { verified_present: false, detected_unverifiable: true, missing: false };
+  if (check.result === "fail") return { verified_present: false, detected_unverifiable: false, missing: true };
+  return { verified_present: false, detected_unverifiable: true, missing: false };
+}
+
+export function getEvidenceStateForTest(checks: BaselineCheck[], checkName: string) {
+  return getEvidenceState(checks, checkName);
+}
+
+function deriveMissingAndUnverifiable(params: {
+  checks: BaselineCheck[];
+  producesFoodWaste: boolean | null;
+  producesHazardousWaste: boolean | null;
+}) {
+  const { checks, producesFoodWaste, producesHazardousWaste } = params;
+  const wtnState = getEvidenceState(checks, "Waste Transfer Note present");
+  const invoiceState = getEvidenceState(checks, "Waste invoice or collection evidence present");
+  const carrierState = getEvidenceState(checks, "Carrier licence evidence present");
+  const missingDocs: string[] = [];
+  if (wtnState.missing) missingDocs.push("Waste transfer note");
+  if (carrierState.missing) missingDocs.push("Carrier licence evidence");
+  if (checks.find((c) => c.check_name === "Supplier/contract evidence present")?.result === "fail") missingDocs.push("Supplier/contract evidence");
+  if (producesFoodWaste && checks.find((c) => c.check_name === "Food waste evidence present")?.result === "fail") missingDocs.push("Food waste documentation");
+  if (producesHazardousWaste && checks.find((c) => c.check_name === "Hazardous waste consignment note present")?.result === "fail") {
+    missingDocs.push("Hazardous waste consignment note");
+  }
+  const unverifiableDocs: string[] = [];
+  if (wtnState.detected_unverifiable) unverifiableDocs.push("Waste transfer note - uploaded but unreadable");
+  if (invoiceState.detected_unverifiable) unverifiableDocs.push("Waste invoice / collection evidence - uploaded but unreadable");
+  if (carrierState.detected_unverifiable) unverifiableDocs.push("Carrier licence evidence - uploaded but unreadable");
+  return {
+    missingDocs: Array.from(new Set(missingDocs)),
+    unverifiableDocs,
+    wtnState,
+    invoiceState,
+    carrierState
+  };
+}
+
+export function deriveMissingAndUnverifiableForTest(params: {
+  checks: BaselineCheck[];
+  producesFoodWaste: boolean | null;
+  producesHazardousWaste: boolean | null;
+}) {
+  return deriveMissingAndUnverifiable(params);
+}
+
 export function buildChecksForTest(params: { business: BusinessInfo; docs: ReportDocument[]; rules?: RuleRef[]; sources?: SourceRef[] }) {
   return buildChecks({
     business: params.business,
@@ -1521,15 +1580,7 @@ function classifyNotUsedDocuments(docs: ReportDocument[], business: BusinessInfo
       });
       continue;
     }
-    if (relevance.relevance_status === "RELEVANT_UNREADABLE") {
-      out.push({
-        file_name: doc.file_name,
-        reason: "Low quality / unreadable - unable to verify content",
-        recommended_action: `Re-upload ${doc.file_name} in higher quality if it is intended to evidence compliance.`,
-        category: "unreadable"
-      });
-      continue;
-    }
+    if (relevance.relevance_status === "RELEVANT_UNREADABLE") continue;
 
     if (isFailed) {
       if (business.produces_hazardous_waste && looksLikeHazardousEvidence(doc)) {
@@ -1575,6 +1626,15 @@ function classifyNotUsedDocuments(docs: ReportDocument[], business: BusinessInfo
     }
   }
   return out;
+}
+
+function classifyDocumentsRequiringReview(docs: ReportDocument[]) {
+  return docs
+    .filter((doc) => getDocumentRelevance(doc).relevance_status === "RELEVANT_UNREADABLE")
+    .map((doc) => ({
+      file_name: doc.file_name,
+      reason: "Low quality / unreadable - unable to verify content"
+    }));
 }
 
 export function classifyNotUsedDocumentsForTest(
@@ -1710,6 +1770,12 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   }
 
   const checks = buildChecks({ business, docs, rules: refs, sources: sourceRefs });
+  const evidenceStates = deriveMissingAndUnverifiable({
+    checks,
+    producesFoodWaste: business.produces_food_waste,
+    producesHazardousWaste: business.produces_hazardous_waste
+  });
+  const { wtnState, invoiceState, carrierState } = evidenceStates;
   const entityValidation = validateSingleBusinessPack({
     onboardedBusinessName: business.name,
     documents: docs
@@ -1724,15 +1790,11 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   });
   const mixedBusinessHighRisk = entityValidation.finding?.status === "fail";
   const wtnMissing = checks.find((c) => c.check_name === "Waste Transfer Note present")?.result === "fail";
-  const missingDocs: string[] = [];
-  if (checks.find((c) => c.check_name === "Waste Transfer Note present")?.result === "fail") missingDocs.push("Waste transfer note");
-  if (checks.find((c) => c.check_name === "Carrier licence evidence present")?.result === "fail") missingDocs.push("Carrier licence evidence");
-  if (checks.find((c) => c.check_name === "Supplier/contract evidence present")?.result !== "pass") missingDocs.push("Supplier/contract evidence");
-  if (business.produces_food_waste && checks.find((c) => c.check_name === "Food waste evidence present")?.result !== "pass") missingDocs.push("Food waste documentation");
-  if (business.produces_hazardous_waste && checks.find((c) => c.check_name === "Hazardous waste consignment note present")?.result !== "pass") missingDocs.push("Hazardous waste consignment note");
-  const dedupedMissingDocs = Array.from(new Set(missingDocs));
+  const dedupedMissingDocs = evidenceStates.missingDocs;
+  const unverifiableDocs = evidenceStates.unverifiableDocs;
 
   const notUsedDocs = classifyNotUsedDocuments(docs, business);
+  const documentsRequiringReview = classifyDocumentsRequiringReview(docs);
   const supportingDocs = classifySupportingDocuments(docs);
   const usedDocs = docs.filter((doc) => getDocumentRelevance(doc).used_in_assessment);
   const usageSummary = buildUsageSummary(docs);
@@ -1761,6 +1823,12 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   if (checks.some((c) => c.source_reference.startsWith("No source reference available"))) {
     cannotVerify.add("Some checks could not be linked to an official source reference.");
   }
+  if (wtnState.detected_unverifiable) {
+    cannotVerify.add("Waste transfer note details could not be verified due to document quality.");
+  }
+  if (invoiceState.detected_unverifiable) {
+    cannotVerify.add("Invoice/collection details could not be verified due to document quality.");
+  }
   if (entityValidation.finding?.status === "fail") {
     cannotVerify.add("The uploaded pack appears to mix multiple business entities, so a single-business assessment is unreliable.");
   }
@@ -1772,6 +1840,9 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   if (irrelevantOnlyPack) {
     cannotVerify.clear();
     cannotVerify.add(IRRELEVANT_ONLY_CANNOT_VERIFY);
+  }
+  if (wtnState.detected_unverifiable || invoiceState.detected_unverifiable) {
+    cannotVerify.delete("Some checks could not be linked to an official source reference.");
   }
 
   const recommendedActions = Array.from(
@@ -1808,6 +1879,10 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   const businessActionsOnly = recommendedActions.filter(
     (action) => !/missing_fields|ewc_code_or_licence_number|document_type|no action required|no immediate action/i.test(action.toLowerCase())
   );
+  const unreadablePriorityActions: string[] = [];
+  if (wtnState.detected_unverifiable || invoiceState.detected_unverifiable) {
+    unreadablePriorityActions.push("Re-upload clearer copies of the waste transfer note and invoice.");
+  }
   const foodWasteMissing = business.produces_food_waste && checks.find((c) => c.check_name === "Food waste evidence present")?.result === "fail";
   const refinedBusinessActions = wtnMissing
     ? businessActionsOnly.filter((action) => /waste transfer note/i.test(action))
@@ -1817,7 +1892,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   const uniqueRefinedActions = Array.from(new Set(refinedBusinessActions));
   const finalActions = mixedBusinessHighRisk
     ? mixedBusinessPrimaryActions()
-    : uniqueRefinedActions;
+    : Array.from(new Set([...unreadablePriorityActions, ...uniqueRefinedActions]));
   const finalActionsWithRelevanceFallback =
     docs.length > 0 && usedDocs.length === 0
       ? [IRRELEVANT_ONLY_ACTION, ...finalActions]
@@ -1882,8 +1957,37 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     if (removeLegacyCarrierTiming) {
       return false;
     }
+    const text = `${risk.title} ${risk.description ?? ""}`.toLowerCase();
+    if (wtnState.detected_unverifiable && /no valid waste transfer note|missing waste transfer note|waste transfer note missing/.test(text)) {
+      return false;
+    }
+    if (invoiceState.detected_unverifiable && /no invoice evidence|missing invoice|invoice evidence missing/.test(text)) {
+      return false;
+    }
     return true;
   });
+  if (wtnState.detected_unverifiable) {
+    businessRisks.unshift({
+      id: "wtn-unverifiable",
+      title: "Waste transfer note detected but could not be verified",
+      description: "A waste transfer note appears to have been uploaded, but the document quality prevented key details from being verified.",
+      severity: "medium",
+      status: "open",
+      rule_id: "wtn_detected_unverifiable",
+      document_id: null
+    });
+  }
+  if (invoiceState.detected_unverifiable) {
+    businessRisks.unshift({
+      id: "invoice-unverifiable",
+      title: "Waste invoice detected but could not be verified",
+      description: "A waste invoice appears to have been uploaded, but the document quality prevented key details from being verified.",
+      severity: "medium",
+      status: "open",
+      rule_id: "invoice_detected_unverifiable",
+      document_id: null
+    });
+  }
   if (carrierCheck?.result === "fail") {
     businessRisks.unshift({
       id: "carrier-timing-risk-fail",
@@ -1951,8 +2055,9 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
         : confidence;
   if (irrelevantOnlyPack) finalConfidence = "Low Confidence / Cannot Fully Verify";
 
+  const attentionChecks = checks.filter((c) => c.result === "attention_needed").length;
   const confidenceContributors = [
-    `Baseline evidence checks: ${checks.filter((c) => c.result === "pass").length}/${checks.length} passed`,
+    `Baseline evidence checks: ${checks.filter((c) => c.result === "pass").length}/${checks.length} passed${attentionChecks > 0 ? `, ${attentionChecks} need review` : ""}`,
     `Extraction completeness: ${Math.round(extractionCompleteness * 100)}%`,
     `Business-level risks (high/medium): ${countHighMediumRisks(topRisks)}`,
     `Cross-document ${pluralize(nonMaintenanceConsistencyFindings.length, "finding", "findings")}: ${nonMaintenanceConsistencyFindings.length}`,
@@ -2068,6 +2173,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
             ),
     top_risks: irrelevantOnlyPack ? [noRelevantRisk] : topRisks,
     missing_documents: irrelevantOnlyPack ? ["No valid waste compliance documents were provided."] : dedupedMissingDocs,
+    unverifiable_documents: irrelevantOnlyPack ? [] : unverifiableDocs,
     compliance_checks: checks,
     documents: docs,
     references: refs,
@@ -2078,6 +2184,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     consistency_findings: nonMaintenanceConsistencyFindings,
     confidence_contributors: confidenceContributors,
     documents_not_used: notUsedDocs.map((d) => ({ file_name: d.file_name, reason: d.reason })),
+    documents_requiring_review: documentsRequiringReview,
     additional_supporting_documents: supportingDocs,
     consistency_summary: buildConsistencySummary(docs, nonMaintenanceConsistencyFindings, {
       carriersDetected: entityValidation.carrier_names,

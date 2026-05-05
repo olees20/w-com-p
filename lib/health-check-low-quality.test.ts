@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildChecksForTest, scoreFromChecksForTest, classifyDocumentRelevanceForTest, type ReportDocument } from "@/lib/health-check-report";
+import {
+  buildChecksForTest,
+  scoreFromChecksForTest,
+  classifyDocumentRelevanceForTest,
+  deriveMissingAndUnverifiableForTest,
+  type ReportDocument
+} from "@/lib/health-check-report";
 
 const mk = (overrides: Partial<ReportDocument>): ReportDocument => ({
   id: Math.random().toString(36).slice(2),
@@ -73,4 +79,15 @@ test("low quality relevant docs are classified as RELEVANT_UNREADABLE and checks
     }
   });
   assert.ok(score.score >= 20 && score.score <= 50);
+
+  const derived = deriveMissingAndUnverifiableForTest({
+    checks,
+    producesFoodWaste: true,
+    producesHazardousWaste: false
+  });
+  assert.ok(!derived.missingDocs.includes("Waste transfer note"));
+  assert.ok(!derived.missingDocs.includes("Waste invoice / collection evidence"));
+  assert.ok(derived.missingDocs.includes("Carrier licence evidence"));
+  assert.ok(derived.unverifiableDocs.includes("Waste transfer note - uploaded but unreadable"));
+  assert.ok(derived.unverifiableDocs.includes("Waste invoice / collection evidence - uploaded but unreadable"));
 });

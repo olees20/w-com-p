@@ -299,6 +299,24 @@ export default async function ResultsPage() {
       </section>
 
       <section className="app-panel p-5">
+        <h2 className="text-lg font-bold text-[#111827]">Unverifiable Documents</h2>
+        <div className="mt-3 space-y-2">
+          {report.unverifiable_documents?.length ? report.unverifiable_documents.map((m) => <p key={m} className="text-sm text-[#374151]">- {m}</p>) : <p className="text-sm text-[#6B7280]">No uploaded evidence was flagged as unreadable.</p>}
+        </div>
+      </section>
+
+      <section className="app-panel p-5">
+        <h2 className="text-lg font-bold text-[#111827]">Documents Requiring Review</h2>
+        <div className="mt-3 space-y-2">
+          {report.documents_requiring_review?.length
+            ? report.documents_requiring_review.map((d) => (
+                <p key={`${d.file_name}-${d.reason}`} className="text-sm text-[#374151]">- {d.file_name}: {d.reason}</p>
+              ))
+            : <p className="text-sm text-[#6B7280]">No documents require quality review.</p>}
+        </div>
+      </section>
+
+      <section className="app-panel p-5">
         <h2 className="text-lg font-bold text-[#111827]">Documents Not Used In The Assessment</h2>
         <div className="mt-3 space-y-2">
           {docsNotUsedForDisplay.length ? docsNotUsedForDisplay.map((d) => (
