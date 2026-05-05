@@ -33,6 +33,7 @@ export type DuplicateComparisonDebug = {
   service_lines_match: boolean;
   final_duplicate_score: number;
   duplicate: boolean;
+  reason: string;
 };
 
 function norm(v: string | null | undefined) {
@@ -95,14 +96,38 @@ function getHash(doc: DuplicateDoc) {
 
 function invoiceSignature(doc: DuplicateDoc) {
   const p = doc.ai_extracted_json ?? {};
+  const rawText =
+    getJsonText(p, ["raw_text", "extracted_text", "text", "raw_text_excerpt"]) ||
+    doc.ai_summary ||
+    "";
+  const invoiceNumberRaw =
+    getJsonText(p, ["invoice_number", "invoice_no", "invoice_id", "reference", "ref", "inv_no", "document_number"]) ||
+    extractInvoiceNumberFromText(rawText);
   return {
-    number: norm(getJsonText(p, ["invoice_number", "invoice_no", "invoice_id", "reference", "ref", "inv_no", "document_number"])),
+    number: normalizeInvoiceNumber(invoiceNumberRaw),
     supplier: norm(doc.extracted_supplier ?? getJsonText(p, ["invoice_issuer", "supplier", "provider"])),
     customer: norm(getJsonText(p, ["customer_name", "client_name", "invoice_recipient", "customer", "client", "bill_to", "recipient_name", "account_name"])),
     date: normDate(doc.extracted_date ?? getJsonText(p, ["invoice_date", "document_date", "date"])),
     services: norm(getJsonText(p, ["service_lines", "line_items", "service_description", "description", "services", "items"])),
     amount: norm(getJsonText(p, ["total_amount", "amount_due", "total", "invoice_total", "grand_total"]))
   };
+}
+
+function normalizeInvoiceNumber(v: string | null | undefined) {
+  return (v ?? "").toUpperCase().replace(/\s+/g, "").trim();
+}
+
+function extractInvoiceNumberFromText(text: string) {
+  const patterns = [
+    /invoice\s*(?:no|number|#)\s*[:\-]?\s*([A-Z]{1,5}-?\d{2,}[\w-]*)/i,
+    /invoice\s+([A-Z]{1,5}-?\d{2,}[\w-]*)/i,
+    /\b(INV-?\d{2,}[A-Z0-9-]*)\b/i
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+  return "";
 }
 
 function wtnSignature(doc: DuplicateDoc) {
@@ -156,10 +181,20 @@ function sameInvoice(a: DuplicateDoc, b: DuplicateDoc) {
   if (servicesMatch) score += 1;
   if (copySignal && supplierMatch && customerMatch && dateMatch) score += 2;
 
+  const overlapServiceWords =
+    !!sa.services &&
+    !!sb.services &&
+    sa.services.split(" ").filter((w) => w.length > 3).some((w) => sb.services.includes(w));
+  const amountMatch = !!sa.amount && !!sb.amount && sa.amount === sb.amount;
+
   const duplicate =
-    invoiceNumberMatch ||
-    (supplierMatch && customerMatch && dateMatch && servicesMatch) ||
-    (copySignal && supplierMatch && customerMatch && dateMatch && (invoiceNumberMatch || !sa.number || !sb.number)) ||
+    // A) strong invoice number + supplier + customer
+    (invoiceNumberMatch && supplierMatch && customerMatch) ||
+    // B) filename copy fallback
+    (copySignal && supplierMatch && customerMatch && dateMatch) ||
+    // C) content similarity fallback
+    (supplierMatch && customerMatch && dateMatch && (overlapServiceWords || amountMatch)) ||
+    // tolerate missing customer on one side if copy/date/supplier/services strongly align
     (copySignal && supplierMatch && dateMatch && servicesMatch && (!sa.customer || !sb.customer)) ||
     score >= 6;
 
@@ -233,6 +268,13 @@ function compareInvoiceDebug(a: DuplicateDoc, b: DuplicateDoc): DuplicateCompari
   if (servicesMatch) score += 1;
   if (copySignal && supplierMatch && customerMatch && dateMatch) score += 2;
   const duplicate = exactHashMatch || sameInvoice(a, b);
+  const reason = duplicate
+    ? invoiceNumberMatch && supplierMatch && customerMatch
+      ? "strong_invoice_number_match"
+      : copySignal && supplierMatch && customerMatch && dateMatch
+        ? "copy_filename_fallback"
+        : "content_similarity_fallback"
+    : "no_duplicate_rule_matched";
   return {
     a_file: a.file_name,
     b_file: b.file_name,
@@ -245,7 +287,8 @@ function compareInvoiceDebug(a: DuplicateDoc, b: DuplicateDoc): DuplicateCompari
     date_match: dateMatch,
     service_lines_match: servicesMatch,
     final_duplicate_score: score,
-    duplicate
+    duplicate,
+    reason
   };
 }
 

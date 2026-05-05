@@ -44,6 +44,42 @@ test("same supplier different invoice number is not duplicate", () => {
   assert.equal(detectDuplicateDocuments(docs).length, 0);
 });
 
+test("same invoice number + same supplier/customer is duplicate even if one side has partial extraction", () => {
+  const docs = [
+    mk({
+      id: "a",
+      file_name: "invoice_april.pdf",
+      extracted_supplier: "EcoLoop Waste Services Ltd",
+      extracted_date: "2026-04-26",
+      ai_summary: "Invoice EL-90199 for Copper Kettle Bistro Ltd",
+      ai_extracted_json: {
+        customer_name: "Copper Kettle Bistro Ltd",
+        service_lines: ""
+      }
+    }),
+    mk({
+      id: "b",
+      file_name: "invoice_april_copy.pdf",
+      extracted_supplier: "EcoLoop Waste Services Ltd",
+      extracted_date: "2026-04-26",
+      ai_summary: "Invoice No: EL-90199",
+      ai_extracted_json: {
+        customer_name: "Copper Kettle Bistro Ltd",
+        service_lines: "General Waste Collection; Dry Mixed Recycling; Food Waste Caddy"
+      }
+    })
+  ];
+  assert.equal(detectDuplicateDocuments(docs).length, 1);
+});
+
+test("filename copy + same supplier/customer/date is duplicate", () => {
+  const docs = [
+    mk({ id: "a", file_name: "invoice_april.pdf", extracted_supplier: "EcoLoop", extracted_date: "2026-04-26", ai_extracted_json: { customer_name: "Copper Kettle" } }),
+    mk({ id: "b", file_name: "invoice_april_copy.pdf", extracted_supplier: "EcoLoop", extracted_date: "2026-04-26", ai_extracted_json: { customer_name: "Copper Kettle" } })
+  ];
+  assert.equal(detectDuplicateDocuments(docs).length, 1);
+});
+
 test("copy filename with different invoice number/date is not duplicate", () => {
   const docs = [
     mk({ id: "a", file_name: "invoice_april.pdf", extracted_supplier: "GreenCycle", extracted_date: "2026-04-01", ai_extracted_json: { invoice_number: "INV-1", client_name: "Bean", service_lines: "General waste" } }),
