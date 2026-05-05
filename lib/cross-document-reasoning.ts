@@ -206,7 +206,7 @@ export function runCrossDocumentReasoning(params: {
       key: "historic_expired_licence_uploaded",
       title: "Historic expired licence evidence also uploaded",
       severity: "medium",
-      status: "attention_needed",
+      status: "info",
       message:
         "A valid licence appears to be present, but older expired evidence was also uploaded. Review which document should be relied on.",
       evidence: carrierLicenceDocs

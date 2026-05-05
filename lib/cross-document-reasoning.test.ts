@@ -199,7 +199,9 @@ test("valid + expired shows historic expired evidence, not expired-only", () => 
     ]
   });
 
-  assert.ok(result.consistency_findings.some((f) => f.key === "historic_expired_licence_uploaded"));
+  const historic = result.consistency_findings.find((f) => f.key === "historic_expired_licence_uploaded");
+  assert.ok(historic);
+  assert.equal(historic?.status, "info");
   assert.ok(!result.consistency_findings.some((f) => f.key === "carrier_licence_expired_only"));
 });
 

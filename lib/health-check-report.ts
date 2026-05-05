@@ -1180,7 +1180,22 @@ function mergeDeductions(
   base: ScoreBreakdown,
   extra: Array<{ reason: string; points: number }>
 ): ScoreBreakdown {
-  const deductions = [...base.deductions, ...extra];
+  const raw = [...base.deductions, ...extra];
+  const normalizeReason = (reason: string) => {
+    const r = reason.toLowerCase();
+    if (r.includes("carrier licence") && r.includes("valid at the time of waste transfer")) return "carrier_licence_invalid_at_transfer";
+    if (r.includes("carrier licence") && r.includes("not valid at transfer")) return "carrier_licence_invalid_at_transfer";
+    return reason;
+  };
+  const byReason = new Map<string, { reason: string; points: number }>();
+  for (const item of raw) {
+    const key = normalizeReason(item.reason);
+    const existing = byReason.get(key);
+    if (!existing || item.points > existing.points) {
+      byReason.set(key, item);
+    }
+  }
+  const deductions = Array.from(byReason.values());
   let final = base.starting_score;
   for (const d of deductions) final -= d.points;
   final = Math.max(0, Math.min(100, final));
@@ -1891,6 +1906,20 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   for (const action of normalizedCrossActions) {
     if (!recommendedActions.includes(action)) recommendedActions.push(action);
   }
+  const hasInvalidAtTransferRisk =
+    checks.find((c) => c.check_name === "Carrier licence valid / not expired")?.result === "fail" ||
+    cross.consistency_findings.some((f) => f.key === "carrier_licence_timing_invalid_at_transfer");
+  if (hasInvalidAtTransferRisk) {
+    const removePatterns = [
+      /provide current carrier licence evidence with a valid expiry date/i,
+      /review licence files and keep the current valid evidence clearly identifiable/i
+    ];
+    for (let i = recommendedActions.length - 1; i >= 0; i--) {
+      if (removePatterns.some((p) => p.test(recommendedActions[i]))) {
+        recommendedActions.splice(i, 1);
+      }
+    }
+  }
   for (const item of notUsedDocs) {
     if (item.recommended_action && !recommendedActions.includes(item.recommended_action)) {
       recommendedActions.push(item.recommended_action);
@@ -2082,6 +2111,16 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
       : incompleteEvidence
         ? "Medium Confidence"
         : confidence;
+  if (
+    finalConfidence === "Low Confidence / Cannot Fully Verify" &&
+    !mixedBusinessHighRisk &&
+    score.score >= 60 &&
+    extractionCompleteness >= 0.9 &&
+    cannotVerify.size === 0 &&
+    countHighMediumRisks(topRisks) <= 1
+  ) {
+    finalConfidence = "Medium Confidence";
+  }
   if (entityMismatchAttention && finalConfidence === "High Confidence") {
     finalConfidence = "Medium Confidence";
   }
