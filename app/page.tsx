@@ -37,9 +37,9 @@ export default function LandingPage() {
 
       <section className="container-page py-16">
         <p className="text-sm font-bold uppercase tracking-[0.12em] text-[#1E3A8A]">Waste Compliance Health Check</p>
-        <h1 className="mt-3 max-w-4xl text-4xl font-extrabold tracking-tight sm:text-5xl">Check your waste compliance before an inspection</h1>
+        <h1 className="mt-3 max-w-4xl text-4xl font-extrabold tracking-tight sm:text-5xl">Prove your waste compliance — before an inspector asks</h1>
         <p className="mt-4 max-w-3xl text-lg text-[#6B7280]">
-          Upload your waste transfer notes, invoices, carrier documents and contracts. We analyse them against official UK guidance and give you a clear compliance score, risk summary and audit pack.
+          Upload your waste transfer notes, invoices, carrier documents and contracts. We check whether they can demonstrate compliance, flag gaps, and generate a clear health check report.
         </p>
         <div className="mt-7 flex flex-wrap items-center gap-3">
           <form action="/api/stripe/checkout" method="POST">
@@ -50,22 +50,45 @@ export default function LandingPage() {
               Start Health Check — £99
             </button>
           </form>
-          <p className="text-sm text-[#6B7280]">No subscription. One-off check. Built for busy business owners and operators.</p>
+          <p className="text-sm text-[#6B7280]">One-off check. No subscription. Built for busy UK business owners and operators.</p>
         </div>
       </section>
 
       <section className="container-page pb-10">
         <SectionTitle
           title="Most businesses only discover waste compliance gaps when they are asked to prove them"
-          subtitle="Common issues we see in document reviews"
+          subtitle="Common inspection-readiness issues we find"
         />
         <div className="mt-4 grid gap-3 md:grid-cols-2">
           {[
             "Missing waste transfer notes",
-            "Expired or unclear carrier details",
-            "Inconsistent documents across sites",
-            "Unclear food waste or hazardous waste handling",
-            "No audit-ready folder"
+            "Carrier licence missing, expired, or not valid at transfer date",
+            "Documents issued to the wrong business entity",
+            "Waste evidence uploaded but unreadable",
+            "Food waste or recycling evidence unclear",
+            "Multi-site records that do not line up",
+            "Future-dated or inconsistent document dates",
+            "Duplicate documents that do not add evidence"
+          ].map((item) => (
+            <article key={item} className="app-panel p-4 text-sm text-[#374151]">
+              {item}
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="container-page py-10">
+        <SectionTitle title="What we actually check" subtitle="We check whether your documents prove compliance — not just whether they exist" />
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          {[
+            "Waste transfer notes or equivalent invoice evidence",
+            "Carrier registration evidence and licence validity",
+            "Licence numbers matching waste transfer records",
+            "Waste dates, destinations, EWC codes and transfer details",
+            "Food waste and recycling evidence where relevant",
+            "Business/entity names matching the onboarded business",
+            "Multi-site consistency across WTNs, invoices and suppliers",
+            "Unreadable, duplicate, irrelevant or unsupported files"
           ].map((item) => (
             <article key={item} className="app-panel p-4 text-sm text-[#374151]">
               {item}
@@ -79,12 +102,13 @@ export default function LandingPage() {
         <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
           {[
             "Compliance score out of 100",
-            "Status: Compliant / Attention Needed / At Risk",
-            "Top risks found",
-            "Missing documents list",
+            "Clear status: Compliant, Review Recommended, Attention Needed or At Risk",
+            "Plain-English verdict",
+            "Key risks and why they matter",
+            "Missing and unverifiable documents list",
             "Recommended next actions",
-            "Audit-ready report",
-            "Source-grounded references where available"
+            "Source-grounded references where available",
+            "Audit-ready health check report"
           ].map((item) => (
             <article key={item} className="app-panel p-4 text-sm font-medium text-[#111827]">
               {item}
@@ -99,7 +123,7 @@ export default function LandingPage() {
           {[
             ["1", "Pay £99"],
             ["2", "Upload your waste documents"],
-            ["3", "Receive your health check result and audit pack"]
+            ["3", "Receive your compliance health check and audit-ready report"]
           ].map(([step, label]) => (
             <article key={step} className="app-panel p-5">
               <p className="text-sm font-bold text-[#1E3A8A]">Step {step}</p>
@@ -115,13 +139,14 @@ export default function LandingPage() {
           <div className="mt-5 max-w-xl app-panel p-6">
             <p className="text-sm font-semibold uppercase tracking-wide text-[#1E3A8A]">Waste Compliance Health Check</p>
             <p className="mt-2 text-4xl font-extrabold text-[#111827]">£99 <span className="text-xl font-semibold text-[#6B7280]">one-off</span></p>
+            <p className="mt-2 text-sm text-[#6B7280]">Built for businesses that need to be inspection-ready, not guess compliant.</p>
             <ul className="mt-4 space-y-1 text-sm text-[#374151]">
-              <li>Document upload</li>
-              <li>AI-assisted document review</li>
-              <li>Compliance score</li>
-              <li>Risk summary</li>
-              <li>Missing document flags</li>
-              <li>Audit pack/report</li>
+              <li>Secure document upload</li>
+              <li>AI-assisted evidence extraction</li>
+              <li>Waste compliance health score</li>
+              <li>Risk and missing-evidence summary</li>
+              <li>Unreadable and irrelevant document flags</li>
+              <li>Audit-ready report</li>
             </ul>
             <form action="/api/stripe/checkout" method="POST" className="mt-5">
               <button
@@ -129,6 +154,17 @@ export default function LandingPage() {
                 className="inline-flex w-full items-center justify-center rounded-lg bg-[#1E3A8A] px-4 py-2 text-sm font-bold text-white hover:bg-[#1a3279]"
               >
                 Start Health Check
+              </button>
+            </form>
+            <p className="mt-3 text-xs text-[#6B7280]">Businesses must keep a waste transfer note, or equivalent information such as an invoice, for each non-hazardous waste transfer and check carriers are registered.</p>
+          </div>
+          <div className="mt-5">
+            <form action="/api/stripe/checkout" method="POST">
+              <button
+                type="submit"
+                className="inline-flex items-center justify-center rounded-lg bg-[#1E3A8A] px-4 py-2 text-sm font-bold text-white hover:bg-[#1a3279]"
+              >
+                Start Health Check — £99
               </button>
             </form>
           </div>
@@ -140,8 +176,8 @@ export default function LandingPage() {
         <div className="mt-4 grid gap-3 md:grid-cols-2">
           {[
             "Uses official UK regulatory sources where available",
-            "Private document storage",
-            "Clear 'cannot verify' fallbacks instead of guessing",
+            "We tell you when compliance cannot be proven",
+            "Private document handling",
             "Designed for UK waste compliance support"
           ].map((item) => (
             <article key={item} className="app-panel p-4 text-sm text-[#374151]">
@@ -153,7 +189,7 @@ export default function LandingPage() {
 
       <section className="container-page pb-12">
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-          This service provides compliance support based on the documents you provide. It is not legal advice and does not guarantee regulatory compliance.
+          This service provides compliance support based only on the documents you upload. It is not legal advice and does not guarantee regulatory compliance.
         </div>
       </section>
     </main>
