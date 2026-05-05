@@ -35,6 +35,19 @@ function renderRiskDescription(title: string, description: string | null) {
   return description ?? "No description";
 }
 
+function overrideIrrelevantContributorLine(lines: string[], irrelevant: number, total: number) {
+  const replacement = `Irrelevant/unknown docs: ${irrelevant}/${total}`;
+  let replaced = false;
+  const next = lines.map((line) => {
+    if (line.startsWith("Irrelevant/unknown docs:")) {
+      replaced = true;
+      return replacement;
+    }
+    return line;
+  });
+  return replaced ? next : [...next, replacement];
+}
+
 export default async function AuditPackPage() {
   const supabase = await createServerClient();
   const {
@@ -64,9 +77,28 @@ export default async function AuditPackPage() {
 
   const liveReport = await buildHealthCheckReportForBusiness({ businessId: business.id, userId: user.id });
   const report = useLockedSnapshot ? (latestLocked?.final_report as typeof liveReport) : liveReport;
+  const docsNotUsedForDisplay = useLockedSnapshot ? liveReport.documents_not_used : report.documents_not_used;
+  const usageSummary = useLockedSnapshot
+    ? {
+        irrelevantUnknownDocsCount: liveReport.irrelevantUnknownDocsCount,
+        totalDocs: liveReport.totalDocs,
+        documentsNotUsedCount: liveReport.documentsNotUsedCount,
+        usedDocumentsCount: liveReport.usedDocumentsCount
+      }
+    : {
+        irrelevantUnknownDocsCount: report.irrelevantUnknownDocsCount,
+        totalDocs: report.totalDocs,
+        documentsNotUsedCount: report.documentsNotUsedCount,
+        usedDocumentsCount: report.usedDocumentsCount
+      };
   const mixedBusinessMode =
     report.overall_assessment === "Documents appear to belong to multiple businesses" ||
     report.top_risks.some((risk) => (risk.rule_id ?? "").toLowerCase() === "multi_business_pack");
+  const confidenceContributorsForDisplay = overrideIrrelevantContributorLine(
+    report.confidence_contributors,
+    usageSummary.irrelevantUnknownDocsCount,
+    usageSummary.totalDocs
+  );
 
   return (
     <div className="space-y-6 print:space-y-4">
@@ -110,7 +142,7 @@ export default async function AuditPackPage() {
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm print:shadow-none">
         <h2 className="text-lg font-semibold text-slate-900">Confidence Contributors</h2>
         <div className="mt-3 space-y-1 text-sm text-slate-700">
-          {report.confidence_contributors.map((item) => <p key={item}>- {item}</p>)}
+          {confidenceContributorsForDisplay.map((item) => <p key={item}>- {item}</p>)}
         </div>
       </section>
 
@@ -230,14 +262,14 @@ export default async function AuditPackPage() {
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm print:shadow-none">
-        <h2 className="text-lg font-semibold text-slate-900">Documents Not Used In The Assessment</h2>
+          <h2 className="text-lg font-semibold text-slate-900">Documents Not Used In The Assessment</h2>
         <div className="mt-3 space-y-1 text-sm text-slate-700">
-          {report.documents_not_used.length ? (
+          {docsNotUsedForDisplay.length ? (
             <>
-              {report.documents_not_used.map((d) => <p key={`${d.file_name}-${d.reason}`}>- {d.file_name}: {d.reason}</p>)}
-              {report.documents.length > 0 && report.documents_not_used.length === report.documents.length ? (
+              {docsNotUsedForDisplay.map((d) => <p key={`${d.file_name}-${d.reason}`}>- {d.file_name}: {d.reason}</p>)}
+              {usageSummary.usedDocumentsCount === 0 && usageSummary.totalDocs > 0 ? (
                 <p>All uploaded documents were reviewed; however, none contributed to waste compliance evidence.</p>
-              ) : report.documents_not_used.length > 0 ? (
+              ) : usageSummary.documentsNotUsedCount > 0 ? (
                 <p>Some uploaded documents were excluded because they were not relevant to waste compliance.</p>
               ) : null}
             </>

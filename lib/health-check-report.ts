@@ -106,6 +106,10 @@ export type HealthCheckReport = {
   overall_assessment: string;
   status_reasons: string[];
   informational_findings: ConsistencyFinding[];
+  irrelevantUnknownDocsCount: number;
+  totalDocs: number;
+  documentsNotUsedCount: number;
+  usedDocumentsCount: number;
 };
 
 type NotUsedClassification = {
@@ -207,6 +211,33 @@ function getDocumentRelevance(doc: ReportDocument): DocumentRelevance {
 
 export function classifyDocumentRelevanceForTest(doc: ReportDocument) {
   return getDocumentRelevance(doc);
+}
+
+function getDocumentPreview(doc: ReportDocument) {
+  const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
+  const raw =
+    (typeof payload.raw_text === "string" && payload.raw_text) ||
+    (typeof payload.extracted_text === "string" && payload.extracted_text) ||
+    (typeof payload.text === "string" && payload.text) ||
+    doc.ai_summary ||
+    "";
+  return raw.slice(0, 240);
+}
+
+function buildUsageSummary(docs: ReportDocument[]) {
+  const usedDocumentsCount = docs.filter((doc) => getDocumentRelevance(doc).used_in_assessment).length;
+  const totalDocs = docs.length;
+  const irrelevantUnknownDocsCount = totalDocs - usedDocumentsCount;
+  return {
+    irrelevantUnknownDocsCount,
+    totalDocs,
+    documentsNotUsedCount: irrelevantUnknownDocsCount,
+    usedDocumentsCount
+  };
+}
+
+export function buildUsageSummaryForTest(docs: ReportDocument[]) {
+  return buildUsageSummary(docs);
 }
 
 function classifySupportingDocuments(docs: ReportDocument[]): SupportingDocument[] {
@@ -1375,6 +1406,19 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   if (!business) throw new Error("Business not found.");
 
   const docs = (documents ?? []) as ReportDocument[];
+  if (process.env.NODE_ENV !== "production") {
+    for (const doc of docs) {
+      const relevance = getDocumentRelevance(doc);
+      console.log("[health-check][relevance]", {
+        file_name: doc.file_name,
+        document_type: doc.document_type ?? "unknown",
+        extracted_text_preview: getDocumentPreview(doc),
+        relevance_status: relevance.relevance_status,
+        relevance_reason: relevance.relevance_reason,
+        used_in_assessment: relevance.used_in_assessment
+      });
+    }
+  }
   const openAlerts = (alerts ?? []) as ReportAlert[];
   const refs = (rules ?? []) as RuleRef[];
   const sourceRefs = (sources ?? []) as SourceRef[];
@@ -1405,6 +1449,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   const notUsedDocs = classifyNotUsedDocuments(docs, business);
   const supportingDocs = classifySupportingDocuments(docs);
   const usedDocs = docs.filter((doc) => getDocumentRelevance(doc).used_in_assessment);
+  const usageSummary = buildUsageSummary(docs);
   const cannotVerify = new Set<string>();
   if (!docs.length) cannotVerify.add("No documents uploaded for review.");
   if (docs.length > 0 && usedDocs.length === 0) {
@@ -1726,6 +1771,10 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     },
     overall_assessment: pack04StyleFoodWasteIncomplete ? "Evidence pack incomplete (food waste evidence missing)" : assessment,
     status_reasons: statusReasons,
-    informational_findings: informationalFindings
+    informational_findings: informationalFindings,
+    irrelevantUnknownDocsCount: usageSummary.irrelevantUnknownDocsCount,
+    totalDocs: usageSummary.totalDocs,
+    documentsNotUsedCount: usageSummary.documentsNotUsedCount,
+    usedDocumentsCount: usageSummary.usedDocumentsCount
   };
 }
