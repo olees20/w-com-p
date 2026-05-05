@@ -1319,6 +1319,12 @@ function verdictForMixedBusinessPack() {
   return "We could not reliably assess this health check because the uploaded documents appear to contain records for multiple businesses or unrelated entities.";
 }
 
+function verdictForEntityMismatch(params: { onboardedBusinessName: string | null; unmatchedNames: string[] }) {
+  const target = params.onboardedBusinessName ?? "the onboarded business";
+  const observed = params.unmatchedNames.length ? params.unmatchedNames.join(", ") : "a different business name";
+  return `The uploaded documents appear complete, but they reference ${observed}. Compliance cannot be clearly demonstrated for ${target} until this is confirmed.`;
+}
+
 function overallAssessment(params: {
   score: number;
   checks: BaselineCheck[];
@@ -1329,8 +1335,10 @@ function overallAssessment(params: {
   crossConflicts: number;
   incompleteEvidence: boolean;
   maintenanceOnlyExpiredNow: boolean;
+  entityMismatchAttention: boolean;
 }) {
   if (params.entityMismatchFail) return "Documents appear to belong to multiple businesses";
+  if (params.entityMismatchAttention) return "Evidence pack needs review (business name mismatch detected)";
   if (params.incompleteEvidence) return "Evidence pack incomplete";
   if (params.maintenanceOnlyExpiredNow) return "Evidence pack usable (updates recommended)";
   const highOrMediumRisks = params.risks.filter((risk) => risk.severity === "high" || risk.severity === "medium").length;
@@ -1409,6 +1417,7 @@ export function overallAssessmentForTest(params: {
   crossConflicts: number;
   incompleteEvidence: boolean;
   maintenanceOnlyExpiredNow: boolean;
+  entityMismatchAttention: boolean;
 }) {
   return overallAssessment(params);
 }
@@ -1476,6 +1485,17 @@ export function scoreReliabilityNoteForTest(mixedBusinessHighRisk: boolean) {
   return mixedBusinessHighRisk ? mixedBusinessScoreReliabilityNote() : null;
 }
 
+export function applyEntityMismatchOutcomeForTest(params: {
+  status: "compliant" | "attention_needed" | "at_risk";
+  confidence: HealthCheckReport["confidence"];
+  entityMismatchAttention: boolean;
+}) {
+  const status = params.entityMismatchAttention && params.status === "compliant" ? "attention_needed" : params.status;
+  const confidence =
+    params.entityMismatchAttention && params.confidence === "High Confidence" ? "Medium Confidence" : params.confidence;
+  return { status, confidence };
+}
+
 function isBusinessRelevantRisk(alert: ReportAlert) {
   const text = `${alert.title} ${alert.description ?? ""}`.toLowerCase();
   const patterns = [
@@ -1492,7 +1512,9 @@ function isBusinessRelevantRisk(alert: ReportAlert) {
     "site coverage",
     "missing destination",
     "missing ewc",
-    "multiple businesses"
+    "multiple businesses",
+    "onboarded business",
+    "business name mismatch"
   ];
   return patterns.some((p) => text.includes(p));
 }
@@ -1780,6 +1802,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     onboardedBusinessName: business.name,
     documents: docs
   });
+  const entityMismatchAttention = entityValidation.finding?.key === "document_entity_mismatch";
   const cross = runCrossDocumentReasoning({
     documents: docs,
     openAlerts,
@@ -1913,6 +1936,12 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     status: mergedScore >= 80 ? "compliant" : mergedScore >= 50 ? "attention_needed" : "at_risk",
     breakdown: mergedBreakdown
   } as const;
+  if (entityMismatchAttention && score.status === "compliant") {
+    score = {
+      ...score,
+      status: "attention_needed"
+    };
+  }
   if (irrelevantOnlyPack) {
     score = {
       score: 0,
@@ -2053,6 +2082,9 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
       : incompleteEvidence
         ? "Medium Confidence"
         : confidence;
+  if (entityMismatchAttention && finalConfidence === "High Confidence") {
+    finalConfidence = "Medium Confidence";
+  }
   if (irrelevantOnlyPack) finalConfidence = "Low Confidence / Cannot Fully Verify";
 
   const attentionChecks = checks.filter((c) => c.result === "attention_needed").length;
@@ -2092,7 +2124,8 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     entityMismatchFail: entityValidation.finding?.status === "fail",
     crossConflicts,
     incompleteEvidence,
-    maintenanceOnlyExpiredNow: hasOnlyExpiredNowMaintenanceIssue
+    maintenanceOnlyExpiredNow: hasOnlyExpiredNowMaintenanceIssue,
+    entityMismatchAttention
   });
   const pack04StyleFoodWasteIncomplete =
     !mixedBusinessHighRisk &&
@@ -2160,6 +2193,11 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     plain_english_verdict:
       mixedBusinessHighRisk
         ? verdictForMixedBusinessPack()
+        : entityMismatchAttention
+          ? verdictForEntityMismatch({
+              onboardedBusinessName: business.name,
+              unmatchedNames: entityValidation.unmatched_producer_names
+            })
         : pack04StyleFoodWasteIncomplete
           ? "Core waste evidence is present and internally consistent, but food waste evidence was expected based on the business profile and was not found. Upload food waste collection evidence or contract documentation before relying on this pack."
           : verdict(

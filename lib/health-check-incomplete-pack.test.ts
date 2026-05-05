@@ -97,7 +97,8 @@ test("incomplete but valid evidence pack uses incomplete assessment and medium c
     entityMismatchFail: false,
     crossConflicts: 0,
     incompleteEvidence: incomplete,
-    maintenanceOnlyExpiredNow: false
+    maintenanceOnlyExpiredNow: false,
+    entityMismatchAttention: false
   });
   assert.equal(assessment, "Evidence pack incomplete");
 

@@ -139,7 +139,8 @@ test("expired-now maintenance case remains compliant/high confidence and usable 
     entityMismatchFail: false,
     crossConflicts: 0,
     incompleteEvidence: false,
-    maintenanceOnlyExpiredNow: true
+    maintenanceOnlyExpiredNow: true,
+    entityMismatchAttention: false
   });
   assert.equal(assessment, "Evidence pack usable (updates recommended)");
 

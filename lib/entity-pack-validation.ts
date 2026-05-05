@@ -1,7 +1,7 @@
 import type { ReportDocument } from "@/lib/health-check-report";
 
 export type EntityValidationFinding = {
-  key: "multi_business_pack";
+  key: "multi_business_pack" | "document_entity_mismatch";
   title: string;
   severity: "high" | "medium";
   status: "fail" | "attention_needed";
@@ -382,9 +382,20 @@ export function validateSingleBusinessPack(params: {
       recommended_action: "Remove documents that do not belong to this business and rerun the health check.",
       points: 20
     };
+  } else if (producerNames.length > 0 && matched.length === 0) {
+    finding = {
+      key: "document_entity_mismatch",
+      title: "Documents may not match onboarded business",
+      severity: "high",
+      status: "attention_needed",
+      message: `The documents reference ${unmatched.slice(0, 2).join(", ")} rather than ${params.onboardedBusinessName ?? "the onboarded business"}.`,
+      recommended_action:
+        `Confirm whether ${unmatched[0] ?? "the detected entity"} is a legal/trading name for ${params.onboardedBusinessName ?? "the onboarded business"}, or upload documents issued to the correct business.`,
+      points: 20
+    };
   } else if (unmatched.length >= 1) {
     finding = {
-      key: "multi_business_pack",
+      key: "document_entity_mismatch",
       title: "Some documents may not match the onboarded business",
       severity: "medium",
       status: "attention_needed",
