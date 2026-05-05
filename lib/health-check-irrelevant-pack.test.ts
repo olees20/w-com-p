@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  applyIrrelevantOnlyOverridesForTest,
   buildChecksForTest,
   buildUsageSummaryForTest,
   classifyDocumentRelevanceForTest,
@@ -107,4 +108,31 @@ test("irrelevant content is excluded even when document_type looks like primary 
 
   const completeness = computeRelevantExtractionCompletenessForTest(docs);
   assert.equal(completeness, 0);
+});
+
+test("irrelevant-only override collapses actions/cannot-verify/status messaging", () => {
+  const result = applyIrrelevantOnlyOverridesForTest({
+    irrelevantOnlyPack: true,
+    recommendedActions: ["Upload at least one valid waste transfer note.", "Upload carrier licence evidence."],
+    cannotVerify: [
+      "2 documents could not be fully interpreted.",
+      "2 unsupported files were excluded from the assessment.",
+      "Some checks could not be linked to an official source reference."
+    ],
+    statusReasons: [
+      "Baseline evidence checks: 0/5 passed",
+      "No major cross-document consistency conflicts detected",
+      "No major date/licence conflicts detected",
+      "2 uploaded files were excluded because they were not waste compliance evidence."
+    ]
+  });
+
+  assert.equal(result.recommendedActions.length, 1);
+  assert.equal(
+    result.recommendedActions[0],
+    "Upload waste compliance documents such as WTNs, waste invoices, carrier licence evidence, and food waste collection records."
+  );
+  assert.equal(result.cannotVerify.length, 1);
+  assert.equal(result.cannotVerify[0], "No relevant waste compliance documents were detected in the upload.");
+  assert.ok(result.statusReasons.some((line) => line.includes("excluded because they were not waste compliance evidence")));
 });

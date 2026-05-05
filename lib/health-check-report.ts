@@ -277,6 +277,63 @@ export function buildUsageSummaryForTest(docs: ReportDocument[]) {
   return buildUsageSummary(docs);
 }
 
+function isIrrelevantOnlyPack(usageSummary: {
+  totalDocs: number;
+  usedDocumentsCount: number;
+  documentsNotUsedCount: number;
+}) {
+  return usageSummary.totalDocs > 0 && usageSummary.usedDocumentsCount === 0 && usageSummary.documentsNotUsedCount > 0;
+}
+
+export function isIrrelevantOnlyPackForTest(usageSummary: {
+  totalDocs: number;
+  usedDocumentsCount: number;
+  documentsNotUsedCount: number;
+}) {
+  return isIrrelevantOnlyPack(usageSummary);
+}
+
+const IRRELEVANT_ONLY_ACTION =
+  "Upload waste compliance documents such as WTNs, waste invoices, carrier licence evidence, and food waste collection records.";
+const IRRELEVANT_ONLY_CANNOT_VERIFY = "No relevant waste compliance documents were detected in the upload.";
+
+function applyIrrelevantOnlyOverrides(params: {
+  irrelevantOnlyPack: boolean;
+  recommendedActions: string[];
+  cannotVerify: Set<string>;
+  statusReasons: string[];
+}) {
+  if (!params.irrelevantOnlyPack) {
+    return {
+      recommendedActions: params.recommendedActions,
+      cannotVerify: Array.from(params.cannotVerify),
+      statusReasons: params.statusReasons
+    };
+  }
+
+  return {
+    recommendedActions: [IRRELEVANT_ONLY_ACTION],
+    cannotVerify: [IRRELEVANT_ONLY_CANNOT_VERIFY],
+    statusReasons: params.statusReasons.map((line) =>
+      line === "No unsupported files were excluded" ? "Uploaded files were excluded because they were not waste compliance evidence." : line
+    )
+  };
+}
+
+export function applyIrrelevantOnlyOverridesForTest(params: {
+  irrelevantOnlyPack: boolean;
+  recommendedActions: string[];
+  cannotVerify: string[];
+  statusReasons: string[];
+}) {
+  return applyIrrelevantOnlyOverrides({
+    irrelevantOnlyPack: params.irrelevantOnlyPack,
+    recommendedActions: params.recommendedActions,
+    cannotVerify: new Set(params.cannotVerify),
+    statusReasons: params.statusReasons
+  });
+}
+
 function classifySupportingDocuments(docs: ReportDocument[]): SupportingDocument[] {
   const reasonFromDoc = (doc: ReportDocument) => {
     const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
@@ -1493,6 +1550,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   const supportingDocs = classifySupportingDocuments(docs);
   const usedDocs = docs.filter((doc) => getDocumentRelevance(doc).used_in_assessment);
   const usageSummary = buildUsageSummary(docs);
+  const irrelevantOnlyPack = isIrrelevantOnlyPack(usageSummary);
   const cannotVerify = new Set<string>();
   if (!docs.length) cannotVerify.add("No documents uploaded for review.");
   if (docs.length > 0 && usedDocs.length === 0) {
@@ -1524,6 +1582,10 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   if (wtnMissing) {
     cannotVerify.delete("Waste destination present on WTN where available: cannot verify with current evidence.");
     cannotVerify.delete("EWC code present on WTN where available: cannot verify with current evidence.");
+  }
+  if (irrelevantOnlyPack) {
+    cannotVerify.clear();
+    cannotVerify.add(IRRELEVANT_ONLY_CANNOT_VERIFY);
   }
 
   const recommendedActions = Array.from(
@@ -1572,10 +1634,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     : uniqueRefinedActions;
   const finalActionsWithRelevanceFallback =
     docs.length > 0 && usedDocs.length === 0
-      ? [
-          "Upload waste compliance documents such as WTNs, invoices, carrier licence, or food waste records.",
-          ...finalActions
-        ]
+      ? [IRRELEVANT_ONLY_ACTION, ...finalActions]
       : finalActions;
 
   const baseScore = scoreFromChecks({ checks, docs, business });
@@ -1751,13 +1810,28 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
       ? "Date/licence evidence requires review"
       : "No major date/licence conflicts detected",
     docs.filter((d) => !getDocumentRelevance(d).used_in_assessment).length > 0
-      ? `${docs.filter((d) => !getDocumentRelevance(d).used_in_assessment).length} unsupported ${pluralize(
+      ? `${docs.filter((d) => !getDocumentRelevance(d).used_in_assessment).length} uploaded ${pluralize(
           docs.filter((d) => !getDocumentRelevance(d).used_in_assessment).length,
           "file was",
           "files were"
-        )} excluded`
+        )} excluded because ${pluralize(
+          docs.filter((d) => !getDocumentRelevance(d).used_in_assessment).length,
+          "it was",
+          "they were"
+        )} not waste compliance evidence.`
       : "No unsupported files were excluded"
   ];
+
+  const irrelevantOverrides = applyIrrelevantOnlyOverrides({
+    irrelevantOnlyPack,
+    recommendedActions: hasOnlyExpiredNowMaintenanceIssue
+      ? ["Upload current carrier licence evidence for ongoing compliance."]
+      : pack04StyleFoodWasteIncomplete
+        ? ["Upload food waste collection evidence or contract documentation."]
+        : Array.from(new Set(finalActionsWithRelevanceFallback)),
+    cannotVerify,
+    statusReasons
+  });
 
   return {
     generated_at: new Date().toISOString(),
@@ -1789,12 +1863,8 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     compliance_checks: checks,
     documents: docs,
     references: refs,
-    cannot_verify: Array.from(cannotVerify),
-    recommended_actions: hasOnlyExpiredNowMaintenanceIssue
-      ? ["Upload current carrier licence evidence for ongoing compliance."]
-      : pack04StyleFoodWasteIncomplete
-        ? ["Upload food waste collection evidence or contract documentation."]
-      : Array.from(new Set(finalActionsWithRelevanceFallback)),
+    cannot_verify: irrelevantOverrides.cannotVerify,
+    recommended_actions: irrelevantOverrides.recommendedActions,
     consistency_findings: nonMaintenanceConsistencyFindings,
     confidence_contributors: confidenceContributors,
     documents_not_used: notUsedDocs.map((d) => ({ file_name: d.file_name, reason: d.reason })),
@@ -1813,7 +1883,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
       unmatched_business_names: entityValidation.unmatched_producer_names
     },
     overall_assessment: pack04StyleFoodWasteIncomplete ? "Evidence pack incomplete (food waste evidence missing)" : assessment,
-    status_reasons: statusReasons,
+    status_reasons: irrelevantOverrides.statusReasons,
     informational_findings: informationalFindings,
     irrelevantUnknownDocsCount: usageSummary.irrelevantUnknownDocsCount,
     totalDocs: usageSummary.totalDocs,
