@@ -256,11 +256,11 @@ export function runCrossDocumentReasoning(params: {
 
     findings.push({
       key: "licence_invalid_at_transfer",
-      title: "Licence number mismatch between WTN and valid carrier licence",
+      title: "WTN licence number does not match any valid licence at transfer date",
       severity: "high",
       status: "fail",
       message:
-        "The WTN licence number could be matched only to expired licence evidence for the transfer date, while available valid licence evidence references a different licence number.",
+        "No valid carrier licence could be verified for the transfer because the WTN licence either matched only expired evidence or did not match any licence valid on the transfer date.",
       evidence: [...invalidEvidence, ...mismatchEvidence, ...validNonMatching],
       recommended_action: "Upload licence evidence that matches each WTN licence number and was valid on each transfer date.",
       points: 0,
@@ -350,9 +350,9 @@ export function runCrossDocumentReasoning(params: {
       if (f.key === "licence_invalid_at_transfer") {
         return {
           id: `cross-${idx}-${f.key}`,
-          title: "Carrier licence invalid at transfer",
+          title: "No valid carrier licence for recorded waste transfer",
           description:
-            "The licence referenced on the waste transfer note was not valid at the time of transfer, and the available valid licence evidence does not match the WTN licence number.",
+            "The WTN licence referenced for the transfer could not be validated because the matching licence evidence was expired at transfer date and available valid licence evidence used a different licence number.",
           severity: f.severity,
           status: "open",
           rule_id: f.key,

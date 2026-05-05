@@ -400,11 +400,11 @@ test("licence invalid-at-transfer uses impact wording for risk and technical wor
 
   const consistency = result.consistency_findings.find((f) => f.key === "licence_invalid_at_transfer");
   assert.ok(consistency);
-  assert.equal(consistency?.title, "Licence number mismatch between WTN and valid carrier licence");
+  assert.equal(consistency?.title, "WTN licence number does not match any valid licence at transfer date");
 
   const risk = result.business_level_risks.find((r) => (r.rule_id ?? "") === "licence_invalid_at_transfer");
   assert.ok(risk);
-  assert.equal(risk?.title, "Carrier licence invalid at transfer");
-  assert.ok((risk?.description ?? "").includes("not valid at the time of transfer"));
+  assert.equal(risk?.title, "No valid carrier licence for recorded waste transfer");
+  assert.ok((risk?.description ?? "").includes("expired at transfer date"));
   assert.notEqual(risk?.description, consistency?.message);
 });

@@ -720,9 +720,44 @@ function getCarrierResolution(docs: ReportDocument[]) {
       const expiry = lic.expiry_date ? new Date(lic.expiry_date) : null;
       return licKey === key && expiry && !Number.isNaN(expiry.getTime());
     });
-    if (!linked?.expiry_date) return false;
+    if (!linked?.expiry_date) {
+      if (process.env.NODE_ENV !== "production") {
+        console.log("LICENCE_VALIDATION_DEBUG", {
+          wtn_licence_number: wtn.extracted_licence_number,
+          transfer_date: wtn.extracted_date,
+          matching_licence_found: false,
+          matching_licence_valid_on_date: false,
+          other_valid_licences: carrierDocs
+            .filter((lic) => {
+              const expiry = lic.expiry_date ? new Date(lic.expiry_date) : null;
+              return !!expiry && !Number.isNaN(expiry.getTime()) && expiry >= wtnDate;
+            })
+            .map((lic) => `${getCarrierLicenceFromDoc(lic) ?? "unknown"}:${lic.file_name}`),
+          result: "fail",
+          failure_reason: "WTN licence number did not match any uploaded licence"
+        });
+      }
+      return true;
+    }
     const exp = new Date(linked.expiry_date);
-    return !Number.isNaN(exp.getTime()) && exp < wtnDate;
+    const invalid = !Number.isNaN(exp.getTime()) && exp < wtnDate;
+    if (process.env.NODE_ENV !== "production") {
+      console.log("LICENCE_VALIDATION_DEBUG", {
+        wtn_licence_number: wtn.extracted_licence_number,
+        transfer_date: wtn.extracted_date,
+        matching_licence_found: true,
+        matching_licence_valid_on_date: !invalid,
+        other_valid_licences: carrierDocs
+          .filter((lic) => {
+            const expiry = lic.expiry_date ? new Date(lic.expiry_date) : null;
+            return !!expiry && !Number.isNaN(expiry.getTime()) && expiry >= wtnDate;
+          })
+          .map((lic) => `${getCarrierLicenceFromDoc(lic) ?? "unknown"}:${lic.file_name}`),
+        result: invalid ? "fail" : "pass",
+        failure_reason: invalid ? "Matching licence expired before transfer date" : null
+      });
+    }
+    return invalid;
   });
 
   const validAtTransferButExpiredNowDocs = wtnWithLicence.filter((wtn) => {
@@ -924,7 +959,7 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
       affected_document: carrierDocs[0]?.file_name ?? null,
       recommended_action:
         carrierResolution.hasInvalidAtTransfer
-          ? "Carrier licence was not valid at the time of waste transfer."
+          ? "No valid carrier licence could be verified for the transfer."
           : carrierResolution.hasExpiredNowOnly
             ? "Carrier licence was valid at the time of transfer but has since expired. Updated evidence should be provided."
             : carrierResolution.hasValidMatchingWtnNow || (carrierResolution.hasValidNow && !carrierResolution.wtnMismatch)
@@ -1157,7 +1192,7 @@ function scoreFromChecks(params: { checks: BaselineCheck[]; docs: ReportDocument
   ].some((name) => byName(name)?.result === "attention_needed");
 
   if (byName("Waste Transfer Note present")?.result === "fail") deductions.push({ reason: "Missing waste transfer note", points: 35 });
-  if (byName("Carrier licence valid / not expired")?.result === "fail") deductions.push({ reason: "Carrier licence not valid at transfer date", points: 28 });
+  if (byName("Carrier licence valid / not expired")?.result === "fail") deductions.push({ reason: "No valid carrier licence for transfer", points: 28 });
   if (byName("Carrier licence valid / not expired")?.result === "attention_needed") deductions.push({ reason: "Carrier licence expired now (valid at transfer)", points: 8 });
   if (byName("Carrier licence evidence present")?.result === "fail") deductions.push({ reason: "Missing carrier licence evidence", points: 25 });
   if (business.produces_food_waste && byName("Food waste evidence present")?.result === "fail") {
@@ -2104,11 +2139,12 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   if (carrierCheck?.result === "fail" && !hasUnifiedLicenceTransferFailureRisk) {
     businessRisks.unshift({
       id: "carrier-timing-risk-fail",
-      title: "Carrier licence was not valid at the time of waste transfer",
-      description: "Carrier licence was not valid at the time of waste transfer.",
+      title: "No valid carrier licence for recorded waste transfer",
+      description:
+        "No valid carrier licence could be verified for the transfer because the matching licence evidence was expired at transfer date or valid evidence did not match the WTN licence number.",
       severity: "high",
       status: "open",
-      rule_id: "carrier_licence_timing_invalid_at_transfer",
+      rule_id: "licence_invalid_at_transfer",
       document_id: null
     });
   } else if (carrierCheck?.result === "attention_needed") {
