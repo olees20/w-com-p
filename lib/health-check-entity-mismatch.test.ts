@@ -27,7 +27,7 @@ const mkDoc = (overrides: Partial<ReportDocument>): ReportDocument => ({
   ...overrides
 });
 
-test("entity mismatch at 0% match ratio creates high mismatch finding and strong deduction", () => {
+test("entity mismatch at 0% match ratio with related operational signals is medium severity", () => {
   const docs: ReportDocument[] = [
     mkDoc({ file_name: "invoice_april.pdf" }),
     mkDoc({
@@ -51,18 +51,19 @@ test("entity mismatch at 0% match ratio creates high mismatch finding and strong
 
   assert.equal(result.match_ratio, 0);
   assert.equal(result.finding?.key, "document_entity_mismatch");
-  assert.equal(result.finding?.severity, "high");
+  assert.equal(result.finding?.severity, "medium");
   assert.equal(result.finding?.status, "attention_needed");
-  assert.ok((result.finding?.points ?? 0) >= 15);
+  assert.equal(result.finding?.points, 10);
 });
 
-test("entity mismatch forces status to attention_needed and confidence to medium from otherwise compliant/high", () => {
+test("medium entity mismatch keeps compliant status but lowers confidence to medium", () => {
   const outcome = applyEntityMismatchOutcomeForTest({
     status: "compliant",
     confidence: "High Confidence",
-    entityMismatchAttention: true
+    entityMismatchAttention: true,
+    entityMismatchHigh: false
   });
-  assert.equal(outcome.status, "attention_needed");
+  assert.equal(outcome.status, "compliant");
   assert.equal(outcome.confidence, "Medium Confidence");
 });
 
@@ -81,4 +82,3 @@ test("overall assessment uses business name mismatch wording", () => {
   });
   assert.equal(text, "Evidence pack needs review (business name mismatch detected)");
 });
-

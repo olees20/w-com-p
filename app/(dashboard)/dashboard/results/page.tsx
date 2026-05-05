@@ -26,6 +26,16 @@ function scoreBadge(status: string) {
   return { label: "At Risk", cls: "bg-red-50 text-[#DC2626] border-red-200" };
 }
 
+function statusLabel(report: Awaited<ReturnType<typeof buildHealthCheckReportForBusiness>>) {
+  if (
+    report.score.status === "compliant" &&
+    report.top_risks.some((r) => (r.rule_id ?? "") === "document_entity_mismatch")
+  ) {
+    return "Compliant (Review Recommended)";
+  }
+  return scoreBadge(report.score.status).label;
+}
+
 function healthCheckStatusLabel(params: { activeCheck: HealthCheck | null; latestLocked: HealthCheck | null }) {
   if (params.activeCheck) return "Active";
   if (params.latestLocked?.status === "completed" || params.latestLocked?.final_report) return "Completed";
@@ -157,7 +167,7 @@ export default async function ResultsPage() {
           </div>
           <div className="rounded-lg border border-[#E5E7EB] p-3">
             <p className="text-xs uppercase text-[#6B7280]">Status</p>
-            <span className={`mt-1 inline-flex rounded-full border px-2 py-1 text-xs font-bold ${badge.cls}`}>{badge.label}</span>
+            <span className={`mt-1 inline-flex rounded-full border px-2 py-1 text-xs font-bold ${badge.cls}`}>{statusLabel(report)}</span>
           </div>
           <div className="rounded-lg border border-[#E5E7EB] p-3">
             <p className="text-xs uppercase text-[#6B7280]">Confidence</p>

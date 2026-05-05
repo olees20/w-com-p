@@ -351,3 +351,65 @@ test("collection point address stays site address; transfer station stays destin
   assert.ok(result.destination_names.includes("York Transfer Station"));
   assert.ok(!result.destination_names.includes("Unit A, 10 King Street, Leeds"));
 });
+
+test("graded mismatch: plausible related entity is medium severity with lower points", () => {
+  const docs: ReportDocument[] = [
+    mkDoc({
+      file_name: "wtn.pdf",
+      document_type: "waste_transfer_note",
+      extracted_supplier: "EcoLoop Waste Services Ltd",
+      extracted_date: "2026-04-22",
+      ai_extracted_json: {
+        producer_name: "Copper Kettle Holdings Ltd",
+        carrier_name: "EcoLoop Waste Services Ltd",
+        destination: "Avonmouth Resource Recovery Facility",
+        current_holder_address: "22 Castle Street, Bristol BS1 2BQ"
+      } as unknown as { missing_fields?: string[] }
+    }),
+    mkDoc({
+      file_name: "invoice.pdf",
+      document_type: "invoice",
+      extracted_supplier: "EcoLoop Waste Services Ltd",
+      extracted_date: "2026-04-22",
+      ai_extracted_json: {
+        customer_name: "Copper Kettle Holdings Ltd",
+        invoice_issuer: "EcoLoop Waste Services Ltd"
+      } as unknown as { missing_fields?: string[] }
+    })
+  ];
+
+  const result = validateSingleBusinessPack({
+    onboardedBusinessName: "Copper Kettle Bistro Ltd",
+    documents: docs
+  });
+
+  assert.equal(result.match_ratio, 0);
+  assert.equal(result.finding?.key, "document_entity_mismatch");
+  assert.equal(result.finding?.severity, "medium");
+  assert.equal(result.finding?.points, 10);
+});
+
+test("graded mismatch: unrelated entity remains high severity", () => {
+  const docs: ReportDocument[] = [
+    mkDoc({
+      file_name: "wtn-unrelated.pdf",
+      document_type: "waste_transfer_note",
+      extracted_supplier: null,
+      extracted_date: null,
+      ai_extracted_json: {
+        producer_name: "Blue Horizon Leisure Group",
+        destination: "Unknown"
+      } as unknown as { missing_fields?: string[] }
+    })
+  ];
+
+  const result = validateSingleBusinessPack({
+    onboardedBusinessName: "Copper Kettle Bistro Ltd",
+    documents: docs
+  });
+
+  assert.equal(result.match_ratio, 0);
+  assert.equal(result.finding?.key, "document_entity_mismatch");
+  assert.equal(result.finding?.severity, "high");
+  assert.equal(result.finding?.points, 20);
+});

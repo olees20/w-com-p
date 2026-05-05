@@ -1341,10 +1341,13 @@ function verdictForMixedBusinessPack() {
   return "We could not reliably assess this health check because the uploaded documents appear to contain records for multiple businesses or unrelated entities.";
 }
 
-function verdictForEntityMismatch(params: { onboardedBusinessName: string | null; unmatchedNames: string[] }) {
-  const target = params.onboardedBusinessName ?? "the onboarded business";
+function verdictForEntityMismatch(params: { onboardedBusinessName: string | null; unmatchedNames: string[]; severity: "high" | "medium" | "low" }) {
   const observed = params.unmatchedNames.length ? params.unmatchedNames.join(", ") : "a different business name";
-  return `The uploaded documents appear complete, but they reference ${observed}. Compliance cannot be clearly demonstrated for ${target} until this is confirmed.`;
+  if (params.severity === "high") {
+    const target = params.onboardedBusinessName ?? "the onboarded business";
+    return `The uploaded documents appear complete, but they reference ${observed}. Compliance cannot be clearly demonstrated for ${target} until this is confirmed.`;
+  }
+  return `Compliance appears to be demonstrated, but the business name differs (${observed}) and should be confirmed.`;
 }
 
 function overallAssessment(params: {
@@ -1511,8 +1514,12 @@ export function applyEntityMismatchOutcomeForTest(params: {
   status: "compliant" | "attention_needed" | "at_risk";
   confidence: HealthCheckReport["confidence"];
   entityMismatchAttention: boolean;
+  entityMismatchHigh?: boolean;
 }) {
-  const status = params.entityMismatchAttention && params.status === "compliant" ? "attention_needed" : params.status;
+  const status =
+    params.entityMismatchAttention && (params.entityMismatchHigh ?? false) && params.status === "compliant"
+      ? "attention_needed"
+      : params.status;
   const confidence =
     params.entityMismatchAttention && params.confidence === "High Confidence" ? "Medium Confidence" : params.confidence;
   return { status, confidence };
@@ -1825,6 +1832,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     documents: docs
   });
   const entityMismatchAttention = entityValidation.finding?.key === "document_entity_mismatch";
+  const entityMismatchHigh = entityMismatchAttention && entityValidation.finding?.severity === "high";
   const cross = runCrossDocumentReasoning({
     documents: docs,
     openAlerts,
@@ -1972,7 +1980,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     status: mergedScore >= 80 ? "compliant" : mergedScore >= 50 ? "attention_needed" : "at_risk",
     breakdown: mergedBreakdown
   } as const;
-  if (entityMismatchAttention && score.status === "compliant") {
+  if (entityMismatchHigh && score.status === "compliant") {
     score = {
       ...score,
       status: "attention_needed"
@@ -2173,6 +2181,11 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     maintenanceOnlyExpiredNow: hasOnlyExpiredNowMaintenanceIssue,
     entityMismatchAttention
   });
+  const entityMismatchReviewRecommended =
+    entityMismatchAttention &&
+    !entityMismatchHigh &&
+    score.status === "compliant" &&
+    (entityValidation.finding?.severity === "medium" || entityValidation.finding?.severity === "low");
   const pack04StyleFoodWasteIncomplete =
     !mixedBusinessHighRisk &&
     foodWasteMissing &&
@@ -2242,7 +2255,8 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
         : entityMismatchAttention
           ? verdictForEntityMismatch({
               onboardedBusinessName: business.name,
-              unmatchedNames: entityValidation.unmatched_producer_names
+              unmatchedNames: entityValidation.unmatched_producer_names,
+              severity: (entityValidation.finding?.severity ?? "medium") as "high" | "medium" | "low"
             })
         : pack04StyleFoodWasteIncomplete
           ? "Core waste evidence is present and internally consistent, but food waste evidence was expected based on the business profile and was not found. Upload food waste collection evidence or contract documentation before relying on this pack."
@@ -2283,7 +2297,11 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
       unclear_entity_names: entityValidation.unclear_entity_names,
       unmatched_business_names: entityValidation.unmatched_producer_names
     },
-    overall_assessment: pack04StyleFoodWasteIncomplete ? "Evidence pack incomplete (food waste evidence missing)" : assessment,
+    overall_assessment: pack04StyleFoodWasteIncomplete
+      ? "Evidence pack incomplete (food waste evidence missing)"
+      : entityMismatchReviewRecommended
+        ? "Evidence pack usable (minor issues identified)"
+        : assessment,
     status_reasons: irrelevantOnlyPack
       ? [
           "No relevant waste compliance documents were detected.",

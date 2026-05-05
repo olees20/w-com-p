@@ -24,6 +24,16 @@ function healthCheckStatusLabel(params: { activeCheck: HealthCheck | null; lates
   return "Draft / Test Result";
 }
 
+function reportStatusLabel(report: Awaited<ReturnType<typeof buildHealthCheckReportForBusiness>>) {
+  if (
+    report.score.status === "compliant" &&
+    report.top_risks.some((r) => (r.rule_id ?? "") === "document_entity_mismatch")
+  ) {
+    return "Compliant (Review Recommended)";
+  }
+  return report.score.status;
+}
+
 function renderRiskDescription(title: string, description: string | null) {
   const t = title.toLowerCase();
   if (t.includes("carrier") && (t.includes("expired") || t.includes("expires"))) {
@@ -138,7 +148,7 @@ export default async function AuditPackPage() {
           <p><span className="font-semibold">Sites:</span> {report.business.sites_count ?? "Not provided"}</p>
           <p><span className="font-semibold">Compliance score:</span> {report.score.score}/100</p>
           {report.score_reliability_note ? <p><span className="font-semibold">Score reliability:</span> {report.score_reliability_note}</p> : null}
-          <p><span className="font-semibold">Status:</span> {report.score.status}</p>
+          <p><span className="font-semibold">Status:</span> {reportStatusLabel(report)}</p>
           <p><span className="font-semibold">Confidence:</span> {report.confidence}</p>
         </div>
         <p className="mt-3 text-sm font-semibold text-slate-900">Overall assessment: {report.overall_assessment}</p>

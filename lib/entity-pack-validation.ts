@@ -3,7 +3,7 @@ import type { ReportDocument } from "@/lib/health-check-report";
 export type EntityValidationFinding = {
   key: "multi_business_pack" | "document_entity_mismatch";
   title: string;
-  severity: "high" | "medium";
+  severity: "high" | "medium" | "low";
   status: "fail" | "attention_needed";
   message: string;
   recommended_action: string;
@@ -52,6 +52,27 @@ function normalizeName(value: string | null | undefined) {
     .replace(/\bco\.?\b/g, "company")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function tokenSet(value: string) {
+  return new Set(
+    normalizeName(value)
+      .split(" ")
+      .filter((t) => t && !["ltd", "limited", "company", "group", "&"].includes(t))
+  );
+}
+
+function hasSimilarBusinessName(a: string | null | undefined, b: string | null | undefined) {
+  if (!a || !b) return false;
+  const as = tokenSet(a);
+  const bs = tokenSet(b);
+  if (as.size === 0 || bs.size === 0) return false;
+  let overlap = 0;
+  as.forEach((t) => {
+    if (bs.has(t)) overlap++;
+  });
+  const ratio = overlap / Math.max(as.size, bs.size);
+  return ratio >= 0.5;
 }
 
 function unique(values: string[]) {
@@ -383,16 +404,50 @@ export function validateSingleBusinessPack(params: {
       points: 20
     };
   } else if (producerNames.length > 0 && matched.length === 0) {
-    finding = {
-      key: "document_entity_mismatch",
-      title: "Documents may not match onboarded business",
-      severity: "high",
-      status: "attention_needed",
-      message: `The documents reference ${unmatched.slice(0, 2).join(", ")} rather than ${params.onboardedBusinessName ?? "the onboarded business"}.`,
-      recommended_action:
-        `Confirm whether ${unmatched[0] ?? "the detected entity"} is a legal/trading name for ${params.onboardedBusinessName ?? "the onboarded business"}, or upload documents issued to the correct business.`,
-      points: 20
-    };
+    const extractedDates = unique(processed.map((d) => d.extracted_date ?? "").filter(Boolean));
+    const sameSiteAddressSignal = siteAddressNames.length > 0;
+    const sameCarrierSignal = carrierNames.length > 0;
+    const sameDateSignal = extractedDates.length > 0 && extractedDates.length <= 2;
+    const sameWasteFlowSignal =
+      processed.some((d) => d.document_type === "waste_transfer_note") &&
+      processed.some((d) => d.document_type === "invoice");
+    const similarNameSignal = unmatched.some((name) => hasSimilarBusinessName(name, params.onboardedBusinessName));
+    const relatedSignals = [sameSiteAddressSignal, sameCarrierSignal, sameDateSignal, sameWasteFlowSignal, similarNameSignal].filter(Boolean).length;
+
+    if (similarNameSignal && relatedSignals >= 3) {
+      finding = {
+        key: "document_entity_mismatch",
+        title: "Minor business naming variation detected",
+        severity: "low",
+        status: "attention_needed",
+        message: `The documents reference ${unmatched.slice(0, 2).join(", ")}, which appears close to ${params.onboardedBusinessName ?? "the onboarded business"} naming.`,
+        recommended_action:
+          `Confirm whether ${unmatched[0] ?? "the detected entity"} is a legal/trading name or related entity for ${params.onboardedBusinessName ?? "the onboarded business"}.`,
+        points: 3
+      };
+    } else if (relatedSignals >= 2) {
+      finding = {
+        key: "document_entity_mismatch",
+        title: "Documents may reference a related business entity",
+        severity: "medium",
+        status: "attention_needed",
+        message: `The documents reference ${unmatched.slice(0, 2).join(", ")}, which may be a related or parent entity. This should be confirmed to ensure the documents apply to the onboarded business.`,
+        recommended_action:
+          `Confirm whether ${unmatched[0] ?? "the detected entity"} is a legal/trading name or related entity for ${params.onboardedBusinessName ?? "the onboarded business"}, or upload documents issued to the onboarded business.`,
+        points: 10
+      };
+    } else {
+      finding = {
+        key: "document_entity_mismatch",
+        title: "Documents may not match onboarded business",
+        severity: "high",
+        status: "attention_needed",
+        message: `The documents reference ${unmatched.slice(0, 2).join(", ")} rather than ${params.onboardedBusinessName ?? "the onboarded business"}.`,
+        recommended_action:
+          `Confirm whether ${unmatched[0] ?? "the detected entity"} is a legal/trading name for ${params.onboardedBusinessName ?? "the onboarded business"}, or upload documents issued to the correct business.`,
+        points: 20
+      };
+    }
   } else if (unmatched.length >= 1) {
     finding = {
       key: "document_entity_mismatch",
