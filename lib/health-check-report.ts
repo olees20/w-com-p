@@ -2060,7 +2060,8 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   if (wtnState.detected_unverifiable || invoiceState.detected_unverifiable) {
     unreadablePriorityActions.push("Re-upload clearer copies of the waste transfer note and invoice.");
   }
-  const foodWasteMissing = business.produces_food_waste && checks.find((c) => c.check_name === "Food waste evidence present")?.result === "fail";
+  const foodWasteCheckResult = checks.find((c) => c.check_name === "Food waste evidence present")?.result;
+  const foodWasteMissing = business.produces_food_waste && foodWasteCheckResult === "fail";
   const refinedBusinessActions = wtnMissing
     ? businessActionsOnly.filter((action) => /waste transfer note/i.test(action))
     : foodWasteMissing && !hasCoreUnverifiable
@@ -2207,14 +2208,15 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
       document_id: null
     });
   }
-  if (foodWasteMissing) {
+  if (business.produces_food_waste && foodWasteCheckResult && foodWasteCheckResult !== "pass") {
+    const foodWasteUnverifiable = foodWasteCheckResult === "attention_needed";
     businessRisks.unshift({
       id: "food-waste-missing",
-      title: hasCoreUnverifiable ? "Food waste evidence could not be verified" : "Food waste documentation missing",
-      description: hasCoreUnverifiable
-        ? "Food waste evidence could not be confirmed because core documents were unreadable."
+      title: foodWasteUnverifiable ? "Food waste evidence could not be verified" : "Food waste documentation missing",
+      description: foodWasteUnverifiable
+        ? "Based on the business profile, food waste evidence was expected, but it could not be verified from the uploaded documents due to document quality."
         : "Based on the business profile, food waste evidence was expected but not found in the uploaded documents.",
-      severity: hasCoreUnverifiable ? "medium" : "high",
+      severity: foodWasteUnverifiable ? "medium" : "high",
       status: "open",
       rule_id: "food_waste_missing",
       document_id: null
