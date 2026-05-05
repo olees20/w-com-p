@@ -1137,7 +1137,16 @@ function deriveMissingAndUnverifiable(params: {
   if (wtnState.detected_unverifiable) unverifiableDocs.push("Waste transfer note - uploaded but unreadable");
   if (invoiceState.detected_unverifiable) unverifiableDocs.push("Waste invoice / collection evidence - uploaded but unreadable");
   if (carrierState.detected_unverifiable) unverifiableDocs.push("Carrier licence evidence - uploaded but unreadable");
-  if (hasCoreUnverifiable && checks.find((c) => c.check_name === "Supplier/contract evidence present")?.result === "fail") {
+  const hasContractLikeDoc = checks.some(
+    (c) =>
+      c.check_name === "Supplier/contract evidence present" &&
+      c.evidence_used.some((e) => /contract/i.test(e))
+  );
+  if (
+    hasCoreUnverifiable &&
+    hasContractLikeDoc &&
+    checks.find((c) => c.check_name === "Supplier/contract evidence present")?.result === "fail"
+  ) {
     unverifiableDocs.push("Supplier/contract evidence - could not be confirmed due to unreadable documents");
   }
   if (hasCoreUnverifiable && producesFoodWaste && checks.find((c) => c.check_name === "Food waste evidence present")?.result === "fail") {
@@ -1211,7 +1220,7 @@ function scoreFromChecks(params: { checks: BaselineCheck[]; docs: ReportDocument
   if (byName("Supplier/contract evidence present")?.result === "attention_needed" && supplierEvidenceFromOps.length === 0) {
     deductions.push({ reason: "Missing supplier contract evidence", points: 8 });
   }
-  if (coreUnverifiableDetected) deductions.push({ reason: "Core evidence present but unverifiable", points: 22 });
+  if (coreUnverifiableDetected) deductions.push({ reason: "Uploaded core evidence could not be verified due to document quality", points: 22 });
   if (byName("Waste destination present on WTN where available")?.result === "attention_needed") deductions.push({ reason: "Missing destination detail on WTN", points: 8 });
   if (byName("EWC code present on WTN where available")?.result === "attention_needed") deductions.push({ reason: "Missing EWC code on WTN", points: 8 });
   if (irrelevantOnlyPack) deductions.push({ reason: "No relevant waste compliance evidence detected", points: 25 });
@@ -2019,7 +2028,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
   );
   const unreadablePriorityActions: string[] = [];
   if (wtnState.detected_unverifiable || invoiceState.detected_unverifiable) {
-    unreadablePriorityActions.push("Re-upload clearer copies of uploaded waste documentation to enable verification.");
+    unreadablePriorityActions.push("Re-upload clearer copies of the waste transfer note and invoice.");
   }
   const foodWasteMissing = business.produces_food_waste && checks.find((c) => c.check_name === "Food waste evidence present")?.result === "fail";
   const refinedBusinessActions = wtnMissing
@@ -2035,6 +2044,16 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     docs.length > 0 && usedDocs.length === 0
       ? [IRRELEVANT_ONLY_ACTION, ...finalActions]
       : finalActions;
+  const isPackKStyleUnreadableCore =
+    wtnState.detected_unverifiable &&
+    invoiceState.detected_unverifiable &&
+    carrierState.missing &&
+    business.produces_food_waste === true;
+  const packKActions = [
+    "Re-upload clearer copies of the waste transfer note and invoice.",
+    "Upload carrier licence evidence.",
+    "Upload food waste collection evidence or contract documentation if not visible in the clearer invoice."
+  ];
 
   const baseScore = scoreFromChecks({ checks, docs, business });
   const mergedBreakdown = mergeDeductions(
@@ -2118,7 +2137,7 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
       id: "wtn-unverifiable",
       title: "Waste transfer note detected but could not be verified",
       description: "A waste transfer note appears to have been uploaded, but the document quality prevented key details from being verified.",
-      severity: "medium",
+      severity: "high",
       status: "open",
       rule_id: "wtn_detected_unverifiable",
       document_id: null
@@ -2294,10 +2313,15 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
         )} not waste compliance evidence.`
       : "No unsupported files were excluded"
   ];
+  if (isPackKStyleUnreadableCore) {
+    statusReasons.push("Uploaded waste evidence appears relevant but could not be verified due to low document quality.");
+  }
 
   const irrelevantOverrides = applyIrrelevantOnlyOverrides({
     irrelevantOnlyPack,
-    recommendedActions: hasOnlyExpiredNowMaintenanceIssue
+    recommendedActions: isPackKStyleUnreadableCore
+      ? packKActions
+      : hasOnlyExpiredNowMaintenanceIssue
       ? ["Upload current carrier licence evidence for ongoing compliance."]
       : pack04StyleFoodWasteIncomplete
         ? ["Upload food waste collection evidence or contract documentation."]
@@ -2356,7 +2380,9 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     cannot_verify: irrelevantOnlyPack ? [IRRELEVANT_ONLY_CANNOT_VERIFY] : irrelevantOverrides.cannotVerify,
     recommended_actions: irrelevantOnlyPack
       ? ["Upload waste compliance documents such as WTNs, waste invoices, carrier licence evidence, and food waste collection records."]
-      : irrelevantOverrides.recommendedActions,
+      : isPackKStyleUnreadableCore
+        ? packKActions
+        : irrelevantOverrides.recommendedActions,
     consistency_findings: nonMaintenanceConsistencyFindings,
     confidence_contributors: confidenceContributors,
     documents_not_used: notUsedDocs.map((d) => ({ file_name: d.file_name, reason: d.reason })),

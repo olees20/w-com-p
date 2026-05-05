@@ -74,12 +74,15 @@ test("low quality relevant docs are classified as RELEVANT_UNREADABLE and checks
       name: "Bean & Brew Cafe Ltd",
       business_type: "Cafe",
       sites_count: 1,
-      produces_food_waste: false,
+      produces_food_waste: true,
       produces_hazardous_waste: false
     }
   });
   assert.ok(score.score >= 35 && score.score <= 45);
-  assert.equal(score.breakdown.deductions.filter((d) => d.reason === "Core evidence present but unverifiable").length, 1);
+  assert.equal(
+    score.breakdown.deductions.filter((d) => d.reason === "Uploaded core evidence could not be verified due to document quality").length,
+    1
+  );
   assert.equal(
     score.breakdown.deductions.filter((d) => d.reason.toLowerCase().includes("unreadable")).length,
     0
@@ -100,5 +103,5 @@ test("low quality relevant docs are classified as RELEVANT_UNREADABLE and checks
   assert.ok(derived.unverifiableDocs.includes("Waste transfer note - uploaded but unreadable"));
   assert.ok(derived.unverifiableDocs.includes("Waste invoice / collection evidence - uploaded but unreadable"));
   assert.ok(derived.unverifiableDocs.some((x) => x.includes("Food waste evidence - could not be confirmed")));
-  assert.ok(derived.unverifiableDocs.some((x) => x.includes("Supplier/contract evidence - could not be confirmed")));
+  assert.ok(!derived.unverifiableDocs.some((x) => x.includes("Supplier/contract evidence - could not be confirmed")));
 });
