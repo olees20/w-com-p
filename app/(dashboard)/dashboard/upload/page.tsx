@@ -87,7 +87,7 @@ export default async function UploadPage() {
           </div>
         ) : (
           <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-            This health check is locked or unavailable. Start new Health Check — £99 to upload more documents.
+            This health check is locked or unavailable. Start new Health Check - £99 to upload more documents.
           </div>
         )}
         {showMultiBusinessWarning ? (

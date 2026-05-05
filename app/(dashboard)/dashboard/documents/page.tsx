@@ -20,9 +20,9 @@ type Doc = {
 };
 
 function formatDate(value: string | null) {
-  if (!value) return "—";
+  if (!value) return "-";
   const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "—";
+  if (Number.isNaN(d.getTime())) return "-";
   return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric" }).format(d);
 }
 
@@ -75,7 +75,7 @@ export default async function DocumentsPage() {
         <p className="mt-1 text-sm text-[#6B7280]">View, manage, download, and delete your compliance documents.</p>
         {!canEdit ? (
           <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            Report is locked. Upload and delete are disabled until you start a new Health Check — £99.
+            Report is locked. Upload and delete are disabled until you start a new Health Check - £99.
           </p>
         ) : null}
       </section>
@@ -101,10 +101,10 @@ export default async function DocumentsPage() {
               <tr key={doc.id} className="align-top">
                 <td className="py-3 pr-3 font-semibold text-[#111827]">{doc.file_name}</td>
                 <td className="py-3 pr-3">{doc.document_type ?? "unknown"}</td>
-                <td className="py-3 pr-3">{doc.extracted_supplier ?? "—"}</td>
+                <td className="py-3 pr-3">{doc.extracted_supplier ?? "-"}</td>
                 <td className="py-3 pr-3">{formatDate(doc.extracted_date)}</td>
                 <td className="py-3 pr-3">{formatDate(doc.expiry_date)}</td>
-                <td className="py-3 pr-3">{doc.waste_type ?? "—"}</td>
+                <td className="py-3 pr-3">{doc.waste_type ?? "-"}</td>
                 <td className="py-3 pr-3">
                   <Badge value={doc.ai_risk_level ?? "unknown"} />
                 </td>

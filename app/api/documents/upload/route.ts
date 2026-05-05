@@ -30,7 +30,7 @@ export async function POST(request: Request) {
 
   const activeHealthCheck = await getEditableActiveHealthCheck(business.id, user.id);
   if (!activeHealthCheck) {
-    return NextResponse.json({ error: "No active health check. Start new Health Check — £99." }, { status: 403 });
+    return NextResponse.json({ error: "No active health check. Start new Health Check - £99." }, { status: 403 });
   }
 
   const formData = await request.formData();

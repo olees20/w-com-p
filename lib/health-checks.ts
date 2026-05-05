@@ -122,7 +122,7 @@ export async function requireEditableHealthCheckForDocument(documentId: string, 
   }
 
   if (healthCheck.status !== "active" || healthCheck.locked_at || isExpired(healthCheck.expires_at)) {
-    throw new Error("This health check is locked. Start a new Health Check — £99 to make changes.");
+    throw new Error("This health check is locked. Start a new Health Check - £99 to make changes.");
   }
 
   return { doc, healthCheckId: healthCheck.id };

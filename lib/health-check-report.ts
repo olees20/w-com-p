@@ -1088,7 +1088,7 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
     checks.push({
       check_name: "Waste destination present on WTN where available",
       result: hasDestinationCoverage ? "pass" : "attention_needed",
-      evidence_used: wtnWithDestination.map((entry) => `${entry.doc.file_name} — ${entry.destination}`),
+      evidence_used: wtnWithDestination.map((entry) => `${entry.doc.file_name} - ${entry.destination}`),
       affected_document: wtDocs[0]?.file_name ?? null,
       recommended_action: hasDestinationCoverage ? "No immediate action." : "Ensure destination details are visible on waste transfer records.",
       source_reference: resolveSourceReference(

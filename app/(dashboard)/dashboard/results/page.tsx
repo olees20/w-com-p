@@ -386,7 +386,7 @@ export default async function ResultsPage() {
           </>
         ) : (
           <form action="/api/stripe/checkout" method="POST">
-            <button type="submit" className="inline-flex rounded-lg bg-[#1E3A8A] px-4 py-2 text-sm font-bold text-white">Start new Health Check — £99</button>
+            <button type="submit" className="inline-flex rounded-lg bg-[#1E3A8A] px-4 py-2 text-sm font-bold text-white">Start new Health Check - £99</button>
           </form>
         )}
         <Link href="/dashboard/audit-pack" className="inline-flex rounded-lg border border-[#E5E7EB] bg-white px-4 py-2 text-sm font-bold text-[#111827]">Open audit pack</Link>
