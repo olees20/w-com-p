@@ -120,6 +120,7 @@ export type HealthCheckReport = {
     relevance_reason: string;
     used_in_assessment: boolean;
   }>;
+  noRelevantEvidenceDetected: boolean;
 };
 
 type NotUsedClassification = {
@@ -332,6 +333,46 @@ export function applyIrrelevantOnlyOverridesForTest(params: {
     cannotVerify: new Set(params.cannotVerify),
     statusReasons: params.statusReasons
   });
+}
+
+export function noRelevantEvidenceOutcomeForTest(params: { documentsNotUsedCount: number }) {
+  return {
+    score: {
+      score: 0,
+      status: "at_risk" as const,
+      breakdown: {
+        starting_score: 100,
+        deductions: [{ reason: "No relevant waste compliance evidence detected", points: 100 }],
+        final_score: 0
+      }
+    },
+    confidence: "Low Confidence / Cannot Fully Verify" as const,
+    baseline: {
+      check_name: "Relevant waste compliance evidence present",
+      result: "fail" as const
+    },
+    keyRisks: [
+      {
+        title: "No relevant waste compliance evidence provided",
+        severity: "high" as const
+      }
+    ],
+    recommendedActions: [IRRELEVANT_ONLY_ACTION],
+    cannotVerify: [IRRELEVANT_ONLY_CANNOT_VERIFY],
+    missingDocuments: ["No valid waste compliance documents were provided."],
+    statusReasons: [
+      "No relevant waste compliance documents were detected.",
+      `${params.documentsNotUsedCount} uploaded ${pluralize(
+        params.documentsNotUsedCount,
+        "file was",
+        "files were"
+      )} excluded because ${pluralize(
+        params.documentsNotUsedCount,
+        "it was",
+        "they were"
+      )} not waste compliance evidence.`
+    ]
+  };
 }
 
 function classifySupportingDocuments(docs: ReportDocument[]): SupportingDocument[] {
@@ -700,6 +741,19 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
   const relevantDocs = docs.filter((doc) => getDocumentRelevance(doc).used_in_assessment);
   const hasAnyUploads = docs.length > 0;
   const noRelevantEvidence = hasAnyUploads && relevantDocs.length === 0;
+  if (noRelevantEvidence) {
+    return [
+      {
+        check_name: "Relevant waste compliance evidence present",
+        result: "fail" as const,
+        evidence_used: ["No relevant waste compliance documents found"],
+        affected_document: null,
+        recommended_action:
+          "Upload waste compliance documents such as waste transfer notes, waste invoices, carrier licence evidence and food waste collection records.",
+        source_reference: "https://www.gov.uk/dispose-business-commercial-waste/waste-transfer-notes"
+      }
+    ];
+  }
   const processed = relevantDocs.filter(isProcessed);
   const wtDocs = processed.filter((d) => d.document_type === "waste_transfer_note");
   const carrierDocs = docs.filter(
@@ -885,13 +939,13 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
     });
   }
 
-  if (failedDocs.length > 0 || noRelevantEvidence) {
+  if (failedDocs.length > 0) {
     checks.push({
       check_name: "Document extraction reliability",
       result: "attention_needed",
-      evidence_used: noRelevantEvidence ? docs.map((d) => d.file_name) : failedDocs.map((d) => d.file_name),
+      evidence_used: failedDocs.map((d) => d.file_name),
       affected_document: failedDocs[0]?.file_name ?? null,
-      recommended_action: noRelevantEvidence ? "Upload waste compliance evidence documents (WTN, invoice, carrier licence)." : "Re-upload failed documents or upload clearer copies.",
+      recommended_action: "Re-upload failed documents or upload clearer copies.",
       source_reference: "No source reference available for this specific check."
     });
   }
@@ -1647,11 +1701,22 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     mergedScore = Math.min(mergedScore, 49);
     mergedBreakdown.notes = Array.from(new Set([...(mergedBreakdown.notes ?? []), "Score capped because documents may belong to multiple businesses."]));
   }
-  const score = {
+  let score = {
     score: mergedScore,
     status: mergedScore >= 80 ? "compliant" : mergedScore >= 50 ? "attention_needed" : "at_risk",
     breakdown: mergedBreakdown
   } as const;
+  if (irrelevantOnlyPack) {
+    score = {
+      score: 0,
+      status: "at_risk",
+      breakdown: {
+        starting_score: 100,
+        deductions: [{ reason: "No relevant waste compliance evidence detected", points: 100 }],
+        final_score: 0
+      }
+    } as const;
+  }
   const maintenanceCarrierKey = "carrier_licence_valid_at_transfer_expired_now";
   const nonMaintenanceConsistencyFindings = cross.consistency_findings.filter((f) => f.key !== maintenanceCarrierKey);
   const crossConflicts = nonMaintenanceConsistencyFindings.filter((f) => f.status === "fail" || f.status === "attention_needed").length;
@@ -1745,13 +1810,14 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     topRisks.filter((r) => r.severity === "medium").length <= 1 &&
     businessRisks.some((r) => (r.rule_id ?? "") === maintenanceCarrierKey) &&
     crossConflicts === 0;
-  const finalConfidence = mixedBusinessHighRisk
+  let finalConfidence = mixedBusinessHighRisk
     ? "Low Confidence / Cannot Fully Verify"
     : hasOnlyExpiredNowMaintenanceIssue
       ? "High Confidence"
       : incompleteEvidence
         ? "Medium Confidence"
         : confidence;
+  if (irrelevantOnlyPack) finalConfidence = "Low Confidence / Cannot Fully Verify";
 
   const confidenceContributors = [
     `Baseline evidence checks: ${checks.filter((c) => c.result === "pass").length}/${checks.length} passed`,
@@ -1832,6 +1898,16 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
     cannotVerify,
     statusReasons
   });
+  const noRelevantRisk: ReportAlert = {
+    id: "no-relevant-evidence",
+    title: "No relevant waste compliance evidence provided",
+    description:
+      "The uploaded files were reviewed, but none appear to be waste compliance evidence. We could not assess waste compliance from this upload.",
+    severity: "high",
+    status: "open",
+    rule_id: "no_relevant_evidence_detected",
+    document_id: null
+  };
 
   return {
     generated_at: new Date().toISOString(),
@@ -1858,13 +1934,15 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
               businessRisks.some((r) => r.severity === "high"),
               score.score === 100 && businessRisks.length === 0
             ),
-    top_risks: topRisks,
-    missing_documents: dedupedMissingDocs,
+    top_risks: irrelevantOnlyPack ? [noRelevantRisk] : topRisks,
+    missing_documents: irrelevantOnlyPack ? ["No valid waste compliance documents were provided."] : dedupedMissingDocs,
     compliance_checks: checks,
     documents: docs,
     references: refs,
-    cannot_verify: irrelevantOverrides.cannotVerify,
-    recommended_actions: irrelevantOverrides.recommendedActions,
+    cannot_verify: irrelevantOnlyPack ? [IRRELEVANT_ONLY_CANNOT_VERIFY] : irrelevantOverrides.cannotVerify,
+    recommended_actions: irrelevantOnlyPack
+      ? ["Upload waste compliance documents such as WTNs, waste invoices, carrier licence evidence, and food waste collection records."]
+      : irrelevantOverrides.recommendedActions,
     consistency_findings: nonMaintenanceConsistencyFindings,
     confidence_contributors: confidenceContributors,
     documents_not_used: notUsedDocs.map((d) => ({ file_name: d.file_name, reason: d.reason })),
@@ -1883,12 +1961,26 @@ export async function buildHealthCheckReportForBusiness(params: { businessId: st
       unmatched_business_names: entityValidation.unmatched_producer_names
     },
     overall_assessment: pack04StyleFoodWasteIncomplete ? "Evidence pack incomplete (food waste evidence missing)" : assessment,
-    status_reasons: irrelevantOverrides.statusReasons,
+    status_reasons: irrelevantOnlyPack
+      ? [
+          "No relevant waste compliance documents were detected.",
+          `${usageSummary.documentsNotUsedCount} uploaded ${pluralize(
+            usageSummary.documentsNotUsedCount,
+            "file was",
+            "files were"
+          )} excluded because ${pluralize(
+            usageSummary.documentsNotUsedCount,
+            "it was",
+            "they were"
+          )} not waste compliance evidence.`
+        ]
+      : irrelevantOverrides.statusReasons,
     informational_findings: informationalFindings,
     irrelevantUnknownDocsCount: usageSummary.irrelevantUnknownDocsCount,
     totalDocs: usageSummary.totalDocs,
     documentsNotUsedCount: usageSummary.documentsNotUsedCount,
     usedDocumentsCount: usageSummary.usedDocumentsCount,
-    debug_document_relevance: process.env.NODE_ENV !== "production" ? debugDocumentRelevance : undefined
+    debug_document_relevance: process.env.NODE_ENV !== "production" ? debugDocumentRelevance : undefined,
+    noRelevantEvidenceDetected: irrelevantOnlyPack
   };
 }

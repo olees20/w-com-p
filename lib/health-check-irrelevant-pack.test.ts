@@ -7,6 +7,7 @@ import {
   classifyDocumentRelevanceForTest,
   classifyNotUsedDocumentsForTest,
   computeRelevantExtractionCompletenessForTest,
+  noRelevantEvidenceOutcomeForTest,
   scoreFromChecksForTest,
   type ReportDocument
 } from "@/lib/health-check-report";
@@ -135,4 +136,19 @@ test("irrelevant-only override collapses actions/cannot-verify/status messaging"
   assert.equal(result.cannotVerify.length, 1);
   assert.equal(result.cannotVerify[0], "No relevant waste compliance documents were detected in the upload.");
   assert.ok(result.statusReasons.some((line) => line.includes("excluded because they were not waste compliance evidence")));
+});
+
+test("no relevant evidence state returns single top-level outcome for pack F", () => {
+  const out = noRelevantEvidenceOutcomeForTest({ documentsNotUsedCount: 2 });
+  assert.equal(out.score.score, 0);
+  assert.equal(out.score.status, "at_risk");
+  assert.equal(out.score.breakdown.deductions.length, 1);
+  assert.equal(out.score.breakdown.deductions[0].reason, "No relevant waste compliance evidence detected");
+  assert.equal(out.baseline.check_name, "Relevant waste compliance evidence present");
+  assert.equal(out.baseline.result, "fail");
+  assert.equal(out.keyRisks.length, 1);
+  assert.equal(out.recommendedActions.length, 1);
+  assert.equal(out.cannotVerify.length, 1);
+  assert.equal(out.missingDocuments.length, 1);
+  assert.ok(out.statusReasons[1].includes("2 uploaded files were excluded"));
 });
