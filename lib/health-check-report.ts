@@ -155,13 +155,32 @@ function hasText(v: string | null | undefined) {
   return Boolean(v && v.trim().length > 0);
 }
 
+function hasWasteSpecificContext(text: string) {
+  return /(waste carrier|carrier registration|registered waste carrier|cbdu[0-9a-z]*|upper tier|lower tier|environment agency|waste broker|waste dealer|waste collection|waste transfer|wtn|consignment note|food waste|recycling collection)/.test(
+    text
+  );
+}
+
+function isPublicLiabilityInsuranceOnly(text: string) {
+  const insuranceSignals = /(public liability|insurance certificate|policy no|policy number|cover)/.test(text);
+  return insuranceSignals && !hasWasteSpecificContext(text);
+}
+
+function isMenuOnly(text: string) {
+  const menuSignals = /(menu|latte|flat white|cake|prices|price list|espresso|cappuccino)/.test(text);
+  return menuSignals && !hasWasteSpecificContext(text);
+}
+
 function classifyUnknownDocumentRole(doc: ReportDocument): UnknownDocRole {
   const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
   const text = `${doc.file_name} ${doc.ai_summary ?? ""} ${JSON.stringify(payload)}`.toLowerCase();
+  if (isPublicLiabilityInsuranceOnly(text) || isMenuOnly(text)) return "irrelevant";
+
   const hasSupplierConfirmation = /(supplier confirmation|supplier update|provider confirmation|service confirmation|collection confirmation|correspondence|email)/.test(text);
   const hasLicenceReference = /(licen[cs]e|registration number|carrier number|cbd[u0-9]+)/.test(text);
-  const hasWasteServiceReference = /(waste service|waste collection|collection service|general waste|recycling collection|service agreement|waste transfer)/.test(text);
-  const supportingSignals = hasSupplierConfirmation || hasLicenceReference || hasWasteServiceReference;
+  const hasWasteServiceReference = /(waste service|waste collection|collection service|general waste|recycling collection|service agreement|waste transfer|wtn|consignment note|food waste)/.test(text);
+  const wasteContext = hasWasteSpecificContext(text) || hasWasteServiceReference;
+  const supportingSignals = (hasSupplierConfirmation && wasteContext) || (hasLicenceReference && wasteContext) || hasWasteServiceReference;
   if (supportingSignals) return "supporting";
   if (/(insurance|menu|receipt|bank statement|payroll|employment|cv)/.test(text)) return "irrelevant";
   return "ambiguous";
@@ -170,8 +189,9 @@ function classifyUnknownDocumentRole(doc: ReportDocument): UnknownDocRole {
 function isClearlyIrrelevantDocument(doc: ReportDocument) {
   const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
   const text = `${doc.file_name} ${doc.document_type ?? ""} ${doc.ai_summary ?? ""} ${JSON.stringify(payload)}`.toLowerCase();
+  if (isPublicLiabilityInsuranceOnly(text) || isMenuOnly(text)) return true;
   const irrelevantSignals = /(insurance|menu|restaurant menu|public liability|employers liability|bank statement|payroll|employment|cv|generic receipt)/.test(text);
-  const wasteSignals = /(waste|carrier|licen[cs]e|collection|ewc|consignment|transfer note|recycling|supplier|invoice|contract)/.test(text);
+  const wasteSignals = hasWasteSpecificContext(text) || /(waste service|waste collection|collection service|consignment note|transfer note|wtn|recycling collection|food waste|invoice for waste|waste contract)/.test(text);
   return irrelevantSignals && !wasteSignals;
 }
 
@@ -183,7 +203,7 @@ function classifyDocumentAssessmentRole(doc: ReportDocument): DocumentAssessment
   }
   if (type === "unknown") {
     const unknownRole = classifyUnknownDocumentRole(doc);
-    if (unknownRole === "supporting" || unknownRole === "ambiguous") return "SUPPORTING_EVIDENCE";
+    if (unknownRole === "supporting") return "SUPPORTING_EVIDENCE";
     return "IRRELEVANT_NOT_USED";
   }
   return "SUPPORTING_EVIDENCE";
@@ -192,9 +212,16 @@ function classifyDocumentAssessmentRole(doc: ReportDocument): DocumentAssessment
 function getDocumentRelevance(doc: ReportDocument): DocumentRelevance {
   const role = classifyDocumentAssessmentRole(doc);
   if (role === "IRRELEVANT_NOT_USED") {
+    const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
+    const text = `${doc.file_name} ${doc.document_type ?? ""} ${doc.ai_summary ?? ""} ${JSON.stringify(payload)}`.toLowerCase();
+    const reason = isPublicLiabilityInsuranceOnly(text)
+      ? "unrelated insurance document"
+      : isMenuOnly(text)
+        ? "unrelated menu document"
+        : "unrelated to waste compliance";
     return {
       relevance_status: "IRRELEVANT_NOT_USED",
-      relevance_reason: "unrelated to waste compliance",
+      relevance_reason: reason,
       used_in_assessment: false
     };
   }
