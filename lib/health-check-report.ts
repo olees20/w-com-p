@@ -149,7 +149,7 @@ type SupportingDocument = {
 };
 
 type UnknownDocRole = "supporting" | "irrelevant" | "ambiguous";
-type DocumentAssessmentRole = "PRIMARY_EVIDENCE" | "SUPPORTING_EVIDENCE" | "IRRELEVANT_NOT_USED";
+type DocumentAssessmentRole = "PRIMARY_EVIDENCE" | "SUPPORTING_EVIDENCE" | "IRRELEVANT_NOT_USED" | "RELEVANT_UNREADABLE";
 type DocumentRelevanceStatus = DocumentAssessmentRole | "UNUSABLE";
 type DocumentRelevance = {
   relevance_status: DocumentRelevanceStatus;
@@ -209,8 +209,54 @@ function isClearlyIrrelevantDocument(doc: ReportDocument) {
   return irrelevantSignals && !wasteSignals;
 }
 
+function inferWasteDocumentTypeHint(doc: ReportDocument) {
+  const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
+  const text = `${doc.file_name} ${doc.document_type ?? ""} ${doc.ai_summary ?? ""} ${JSON.stringify(payload)}`.toLowerCase();
+  if (/waste transfer note|\bwtn\b/.test(text)) return "waste_transfer_note";
+  if (/invoice|inv[- ]?\d+|invoice no|invoice number/.test(text)) return "invoice";
+  if (/carrier licence|carrier license|registration number|cbdu|registered waste carrier/.test(text)) return "carrier_licence";
+  if (/contract|service agreement/.test(text)) return "contract";
+  if (/hazardous|consignment/.test(text)) return "hazardous_waste_note";
+  return null;
+}
+
+function hasLowQualitySignal(doc: ReportDocument) {
+  const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
+  const text = `${doc.processing_error ?? ""} ${doc.ai_summary ?? ""} ${JSON.stringify(payload)}`.toLowerCase();
+  return /low quality|poor scan|blurry|faint|unreadable|ocr|could not extract|partial extraction/.test(text);
+}
+
+function hasMissingKeyFieldsForHint(doc: ReportDocument, hint: string) {
+  const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
+  const supplier = hasText(doc.extracted_supplier) || hasText(typeof payload.supplier === "string" ? payload.supplier : null) || hasText(typeof payload.invoice_issuer === "string" ? payload.invoice_issuer : null);
+  const date = hasText(doc.extracted_date) || hasText(typeof payload.document_date === "string" ? payload.document_date : null) || hasText(typeof payload.invoice_date === "string" ? payload.invoice_date : null);
+  const licence = hasText(doc.extracted_licence_number) || hasText(typeof payload.licence_number === "string" ? payload.licence_number : null);
+  if (hint === "invoice") return !(supplier && date);
+  if (hint === "waste_transfer_note") return !(supplier && date);
+  if (hint === "carrier_licence") return !(supplier && licence && hasText(doc.expiry_date));
+  return !(supplier || date || licence);
+}
+
 function classifyDocumentAssessmentRole(doc: ReportDocument): DocumentAssessmentRole {
   if (isClearlyIrrelevantDocument(doc)) return "IRRELEVANT_NOT_USED";
+  const inferredHint = inferWasteDocumentTypeHint(doc);
+  if (inferredHint) {
+    const keyFieldsMissing = hasMissingKeyFieldsForHint(doc, inferredHint);
+    if ((doc.processing_status === "failed" || doc.processing_status === "review" || hasLowQualitySignal(doc)) && keyFieldsMissing) {
+      if (process.env.NODE_ENV !== "production") {
+        const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
+        const raw = ((typeof payload.raw_text === "string" && payload.raw_text) || (typeof payload.extracted_text === "string" && payload.extracted_text) || doc.ai_summary || "").slice(0, 200);
+        console.log("LOW_QUALITY_DETECTED", {
+          filename: doc.file_name,
+          document_type_guess: inferredHint,
+          extracted_text_length: raw.length,
+          key_fields_missing: true,
+          classification: "RELEVANT_UNREADABLE"
+        });
+      }
+      return "RELEVANT_UNREADABLE";
+    }
+  }
   const type = (doc.document_type ?? "unknown").toLowerCase();
   if (["waste_transfer_note", "carrier_licence", "invoice", "contract", "hazardous_waste_note", "recycling_report"].includes(type)) {
     return "PRIMARY_EVIDENCE";
@@ -225,6 +271,13 @@ function classifyDocumentAssessmentRole(doc: ReportDocument): DocumentAssessment
 
 function getDocumentRelevance(doc: ReportDocument): DocumentRelevance {
   const role = classifyDocumentAssessmentRole(doc);
+  if (role === "RELEVANT_UNREADABLE") {
+    return {
+      relevance_status: "RELEVANT_UNREADABLE",
+      relevance_reason: "low quality / unreadable - unable to verify content",
+      used_in_assessment: true
+    };
+  }
   if (role === "IRRELEVANT_NOT_USED") {
     const payload = (doc.ai_extracted_json ?? {}) as Record<string, unknown>;
     const text = `${doc.file_name} ${doc.document_type ?? ""} ${doc.ai_summary ?? ""} ${JSON.stringify(payload)}`.toLowerCase();
@@ -811,15 +864,20 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
   const hasSupplierRelationshipEvidence = supplierRelationshipEvidence.length > 0;
   const hazDocs = processed.filter((d) => d.document_type === "hazardous_waste_note");
   const failedDocs = relevantDocs.filter((d) => d.processing_status === "failed");
+  const unreadableDocs = relevantDocs.filter((d) => getDocumentRelevance(d).relevance_status === "RELEVANT_UNREADABLE");
+  const unreadableHints = unreadableDocs.map((d) => inferWasteDocumentTypeHint(d)).filter(Boolean) as string[];
+  const hasUnreadableWtn = unreadableHints.includes("waste_transfer_note");
+  const hasUnreadableInvoice = unreadableHints.includes("invoice");
+  const hasUnreadableCarrier = unreadableHints.includes("carrier_licence");
 
   const checks: BaselineCheck[] = [];
 
   checks.push({
     check_name: "Waste Transfer Note present",
-    result: wtDocs.length ? "pass" : hasAnyUploads ? "fail" : "cannot_verify",
-    evidence_used: wtDocs.map((d) => d.file_name),
+    result: wtDocs.length ? "pass" : hasUnreadableWtn ? "attention_needed" : hasAnyUploads ? "fail" : "cannot_verify",
+    evidence_used: wtDocs.length ? wtDocs.map((d) => d.file_name) : hasUnreadableWtn ? unreadableDocs.filter((d) => inferWasteDocumentTypeHint(d) === "waste_transfer_note").map((d) => `${d.file_name} (detected but unreadable)`) : [],
     affected_document: wtDocs[0]?.file_name ?? null,
-    recommended_action: wtDocs.length ? "No immediate action." : "Upload at least one valid waste transfer note.",
+    recommended_action: wtDocs.length ? "No immediate action." : hasUnreadableWtn ? "Evidence may be present but could not be reliably extracted due to low document quality." : "Upload at least one valid waste transfer note.",
     source_reference: resolveSourceReference(
       "Waste Transfer Note present",
       findReference(rules, sources, ["waste transfer note business waste gov.uk", "waste duty of care gov.uk"])
@@ -828,10 +886,10 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
 
   checks.push({
     check_name: "Carrier licence evidence present",
-    result: carrierResolution.hasAnyCarrierEvidence ? "pass" : hasAnyUploads ? "fail" : "cannot_verify",
-    evidence_used: carrierDocs.map((d) => d.file_name),
+    result: carrierResolution.hasAnyCarrierEvidence ? "pass" : hasUnreadableCarrier ? "attention_needed" : hasAnyUploads ? "fail" : "cannot_verify",
+    evidence_used: carrierDocs.length ? carrierDocs.map((d) => d.file_name) : hasUnreadableCarrier ? unreadableDocs.filter((d) => inferWasteDocumentTypeHint(d) === "carrier_licence").map((d) => `${d.file_name} (detected but unreadable)`) : [],
     affected_document: carrierDocs[0]?.file_name ?? null,
-    recommended_action: carrierDocs.length ? "No immediate action." : "Upload carrier licence evidence.",
+    recommended_action: carrierDocs.length ? "No immediate action." : hasUnreadableCarrier ? "Evidence may be present but could not be reliably extracted due to low document quality." : "Upload carrier licence evidence.",
     source_reference: resolveSourceReference(
       "Carrier licence evidence present",
       findReference(rules, sources, ["waste carrier licence environment agency", "search waste carriers brokers"])
@@ -874,10 +932,10 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
 
   checks.push({
     check_name: "Waste invoice or collection evidence present",
-    result: invoiceDocs.length || wtDocs.length ? "pass" : hasAnyUploads ? "fail" : "cannot_verify",
-    evidence_used: [...invoiceDocs, ...wtDocs].map((d) => d.file_name),
+    result: invoiceDocs.length || wtDocs.length ? "pass" : hasUnreadableInvoice ? "attention_needed" : hasAnyUploads ? "fail" : "cannot_verify",
+    evidence_used: [...invoiceDocs, ...wtDocs].length ? [...invoiceDocs, ...wtDocs].map((d) => d.file_name) : hasUnreadableInvoice ? unreadableDocs.filter((d) => inferWasteDocumentTypeHint(d) === "invoice").map((d) => `${d.file_name} (detected but unreadable)`) : [],
     affected_document: null,
-    recommended_action: invoiceDocs.length || wtDocs.length ? "No immediate action." : "Upload invoice or collection evidence.",
+    recommended_action: invoiceDocs.length || wtDocs.length ? "No immediate action." : hasUnreadableInvoice ? "Evidence may be present but could not be reliably extracted due to low document quality." : "Upload invoice or collection evidence.",
     source_reference: resolveSourceReference(
       "Waste invoice or collection evidence present",
       findReference(rules, sources, ["dispose business commercial waste", "waste transfer note"])
@@ -982,13 +1040,13 @@ function buildChecks(params: { business: BusinessInfo; docs: ReportDocument[]; r
     });
   }
 
-  if (failedDocs.length > 0) {
+  if (failedDocs.length > 0 || unreadableDocs.length > 0) {
     checks.push({
       check_name: "Document extraction reliability",
       result: "attention_needed",
-      evidence_used: failedDocs.map((d) => d.file_name),
-      affected_document: failedDocs[0]?.file_name ?? null,
-      recommended_action: "Re-upload failed documents or upload clearer copies.",
+      evidence_used: [...failedDocs, ...unreadableDocs].map((d) => d.file_name),
+      affected_document: failedDocs[0]?.file_name ?? unreadableDocs[0]?.file_name ?? null,
+      recommended_action: "Evidence may be present but could not be reliably extracted due to low document quality.",
       source_reference: "No source reference available for this specific check."
     });
   }
@@ -1018,14 +1076,17 @@ function scoreFromChecks(params: { checks: BaselineCheck[]; docs: ReportDocument
   const irrelevantOnlyPack = docs.length > 0 && docs.every((d) => !getDocumentRelevance(d).used_in_assessment);
 
   if (byName("Waste Transfer Note present")?.result === "fail") deductions.push({ reason: "Missing waste transfer note", points: 35 });
+  if (byName("Waste Transfer Note present")?.result === "attention_needed") deductions.push({ reason: "Waste transfer note detected but unreadable", points: 15 });
   if (byName("Carrier licence valid / not expired")?.result === "fail") deductions.push({ reason: "Carrier licence not valid at transfer date", points: 28 });
   if (byName("Carrier licence valid / not expired")?.result === "attention_needed") deductions.push({ reason: "Carrier licence expired now (valid at transfer)", points: 8 });
   if (byName("Carrier licence evidence present")?.result === "fail") deductions.push({ reason: "Missing carrier licence evidence", points: 25 });
+  if (byName("Carrier licence evidence present")?.result === "attention_needed") deductions.push({ reason: "Carrier licence evidence detected but unreadable", points: 12 });
   if (business.produces_food_waste && byName("Food waste evidence present")?.result === "fail") deductions.push({ reason: "Missing food waste evidence", points: 25 });
   if (business.produces_hazardous_waste && byName("Hazardous waste consignment note present")?.result === "fail") deductions.push({ reason: "Missing hazardous waste consignment note", points: 30 });
   if (byName("Supplier/contract evidence present")?.result === "attention_needed" && supplierEvidenceFromOps.length === 0) {
     deductions.push({ reason: "Missing supplier contract evidence", points: 8 });
   }
+  if (byName("Waste invoice or collection evidence present")?.result === "attention_needed") deductions.push({ reason: "Invoice/collection evidence detected but unreadable", points: 15 });
   if (byName("Waste destination present on WTN where available")?.result === "attention_needed") deductions.push({ reason: "Missing destination detail on WTN", points: 8 });
   if (byName("EWC code present on WTN where available")?.result === "attention_needed") deductions.push({ reason: "Missing EWC code on WTN", points: 8 });
   if (irrelevantOnlyPack) deductions.push({ reason: "No relevant waste compliance evidence detected", points: 25 });
@@ -1456,6 +1517,15 @@ function classifyNotUsedDocuments(docs: ReportDocument[], business: BusinessInfo
         file_name: doc.file_name,
         reason: "Unreadable / processing failed",
         recommended_action: `Re-upload ${doc.file_name} if it was intended to evidence waste compliance.`,
+        category: "unreadable"
+      });
+      continue;
+    }
+    if (relevance.relevance_status === "RELEVANT_UNREADABLE") {
+      out.push({
+        file_name: doc.file_name,
+        reason: "Low quality / unreadable - unable to verify content",
+        recommended_action: `Re-upload ${doc.file_name} in higher quality if it is intended to evidence compliance.`,
         category: "unreadable"
       });
       continue;
